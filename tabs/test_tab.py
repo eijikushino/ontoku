@@ -33,6 +33,9 @@ class TestTab(ttk.Frame):
         # スキャナーチャンネル設定用(変更: Pos/Negそれぞれに対応)
         self.scanner_channels_pos = []  # Pos用
         self.scanner_channels_neg = []  # Neg用
+
+        # 選択していないDataSetにCenterコードを送信するオプション（デフォルト: True）
+        self.send_opposite_center = tk.BooleanVar(value=True)
         
         # 実行状況管理用
         self.current_pattern_index = -1  # -1で初期化（未実行状態）
@@ -297,10 +300,21 @@ class TestTab(ttk.Frame):
                    command=self.deselect_all, width=10).pack(side=tk.LEFT, padx=2)
         
         # ★★★ 計測ボタンの参照を保持 ★★★
-        self.measurement_button = ttk.Button(select_frame, text="計測", 
+        self.measurement_button = ttk.Button(select_frame, text="計測",
                    command=self.open_measurement_window, width=10)
         self.measurement_button.pack(side=tk.LEFT, padx=2)
         # ★★★ 修正箇所ここまで ★★★
+
+        # 選択していないDataSetにCenterコードを送信するオプション
+        opposite_center_frame = ttk.Frame(control_frame)
+        opposite_center_frame.pack(fill=tk.X, pady=5)
+        opposite_center_cb = ttk.Checkbutton(
+            opposite_center_frame,
+            text="未選択DataSetにCenter送信",
+            variable=self.send_opposite_center,
+            command=self.save_settings
+        )
+        opposite_center_cb.pack(side=tk.LEFT, padx=2)
         
         # ログ表示
         log_frame = ttk.LabelFrame(right_frame, text="実行ログ", padding=10)
@@ -738,7 +752,7 @@ class TestTab(ttk.Frame):
                 if var.get():
                     cmd = f"DEF {i} DAC {dac_type} {hex_value}\r"
                     self.log_message(f"  送信: {cmd.strip()}", "INFO")
-                    
+
                     try:
                         self.serial_mgr.write(cmd.encode("utf-8"))
                         # レスポンス読み取り
@@ -746,7 +760,40 @@ class TestTab(ttk.Frame):
                     except Exception as e:
                         self.log_message(f"  エラー: {str(e)}", "ERROR")
                         return False
-            
+
+            # 選択していないDataSetにCenterコードを送信（オプション有効時）
+            if self.send_opposite_center.get():
+                # 選択していないDataSetのタイプとCenter値を決定
+                if dataset == 'Position':
+                    opposite_type = 'L'
+                    opposite_center = '8000'
+                else:  # LBC
+                    opposite_type = 'P'
+                    opposite_center = '80000'
+
+                # Neg選択時は反転処理
+                if pole == 'Neg':
+                    opposite_int = int(opposite_center, 16)
+                    if opposite_type == 'P':
+                        opposite_int = 0xFFFFF - opposite_int  # 20ビット反転
+                        opposite_center = f"{opposite_int:05X}"
+                    else:  # L
+                        opposite_int = 0xFFFF - opposite_int  # 16ビット反転
+                        opposite_center = f"{opposite_int:04X}"
+
+                # 選択されているDEFに対して送信
+                for i, var in enumerate(self.def_check_vars):
+                    if var.get():
+                        cmd = f"DEF {i} DAC {opposite_type} {opposite_center}\r"
+                        self.log_message(f"  送信(Center): {cmd.strip()}", "INFO")
+
+                        try:
+                            self.serial_mgr.write(cmd.encode("utf-8"))
+                            self._read_response()
+                        except Exception as e:
+                            self.log_message(f"  エラー: {str(e)}", "ERROR")
+                            return False
+
             return True
             
         except Exception as e:
@@ -897,6 +944,9 @@ class TestTab(ttk.Frame):
                             self.saved_scanner_channels_neg = test_settings['scanner_channels_neg']
                         else:
                             self.saved_scanner_channels_neg = ['ー'] * 6
+
+                        # 未選択DataSetにCenter送信オプション（デフォルト: True）
+                        self.send_opposite_center.set(test_settings.get('send_opposite_center', True))
                     else:
                         self.default_filename = 'pattern'
                         self.saved_def_checks = [i == 0 for i in range(6)]
@@ -932,7 +982,8 @@ class TestTab(ttk.Frame):
                 'filename': self.filename_entry.get().strip(),
                 'def_checks': [var.get() for var in self.def_check_vars],  # 追加
                 'scanner_channels_pos': [ch.get() for ch in self.scanner_channels_pos],
-                'scanner_channels_neg': [ch.get() for ch in self.scanner_channels_neg]
+                'scanner_channels_neg': [ch.get() for ch in self.scanner_channels_neg],
+                'send_opposite_center': self.send_opposite_center.get()  # 未選択DataSetにCenter送信
             }
             
             # 設定ファイルに書き込み

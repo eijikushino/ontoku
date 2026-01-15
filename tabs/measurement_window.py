@@ -49,8 +49,6 @@ class MeasurementWindow(tk.Toplevel):
         # ★★★ CSV保存機能 ★★★
         self.csv_logger = None
         self.is_csv_logging = False
-        self.previous_cycle_code = None  # 前回周回のコード（変更検知用）
-        self.skip_current_cycle = False  # 現在の周回をスキップするか
 
         # ★★★ パターン実行同期オプション ★★★
         self.sync_with_pattern_var = tk.BooleanVar(value=self._load_sync_option())
@@ -542,7 +540,7 @@ class MeasurementWindow(tk.Toplevel):
                 self.count_label.config(text=f"計測回数: {self.measurement_count}")
                 self.log(f"計測OK ({self.measurement_count}): {def_info['name']} {pole} = {value} V", "SUCCESS")
 
-                # ★★★ CSV保存中なら測定値を記録 ★★★
+                # ★★★ CSV保存中なら測定値を記録（全データ保存） ★★★
                 if self.is_csv_logging and self.csv_logger:
                     is_cycle_start = (def_index == 0 and pole == "Pos")
 
@@ -551,33 +549,16 @@ class MeasurementWindow(tk.Toplevel):
                     dataset = current_pattern['dataset']
                     code = current_pattern['code']
 
-                    # 周回開始時にスキップ判定
-                    if is_cycle_start:
-                        # 前回と異なるコード、または最初の周回はスキップ
-                        if self.previous_cycle_code is None or code != self.previous_cycle_code:
-                            if self.previous_cycle_code is None:
-                                self.log(f"最初の周回はスキップ: {code}", "WARNING")
-                            else:
-                                self.log(f"コード切替後の最初の周回はスキップ: {self.previous_cycle_code} → {code}", "WARNING")
-                            self.skip_current_cycle = True
-                            self.csv_logger.discard_current_cycle()
-                        else:
-                            self.skip_current_cycle = False
-
-                        # 次回比較用に現在のコードを記録
-                        self.previous_cycle_code = code
-
-                    # スキップ対象でなければ記録
-                    if not self.skip_current_cycle:
-                        pole_upper = "POS" if pole == "Pos" else "NEG"
-                        self.csv_logger.record_measurement(
-                            def_info['index'],
-                            pole_upper,
-                            value,
-                            is_cycle_start=is_cycle_start,
-                            dataset=dataset,
-                            code=code
-                        )
+                    # 全データを記録（スキップなし）
+                    pole_upper = "POS" if pole == "Pos" else "NEG"
+                    self.csv_logger.record_measurement(
+                        def_info['index'],
+                        pole_upper,
+                        value,
+                        is_cycle_start=is_cycle_start,
+                        dataset=dataset,
+                        code=code
+                    )
             else:
                 error_msg = result.get('error', 'unknown')
                 if error_msg == 'write_failed':
@@ -619,8 +600,6 @@ class MeasurementWindow(tk.Toplevel):
         
         if success:
             self.is_csv_logging = True
-            self.previous_cycle_code = None  # 前回周回のコードをリセット
-            self.skip_current_cycle = False  # スキップフラグをリセット
             self.csv_start_button.config(state=tk.DISABLED)
             self.csv_stop_button.config(state=tk.NORMAL)
             self.csv_status_label.config(text="■ CSV保存中", foreground="red")

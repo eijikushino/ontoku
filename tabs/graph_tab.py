@@ -136,6 +136,27 @@ class GraphTab(ttk.Frame):
                         value="section_avg").pack(side=tk.LEFT, padx=5)
         ttk.Radiobutton(ref_frame, text="初回平均", variable=self.ref_mode_var,
                         value="first_avg").pack(side=tk.LEFT, padx=5)
+
+        # スキップ設定フレーム
+        skip_frame = ttk.Frame(settings_frame)
+        skip_frame.pack(fill=tk.X, pady=2)
+
+        # コード切替後スキップ行数
+        ttk.Label(skip_frame, text="切替後スキップ:").pack(side=tk.LEFT, padx=5)
+        self.skip_after_change_var = tk.StringVar(value="0")
+        ttk.Entry(skip_frame, textvariable=self.skip_after_change_var,
+                  width=5).pack(side=tk.LEFT, padx=2)
+        ttk.Label(skip_frame, text="行").pack(side=tk.LEFT, padx=(0, 15))
+
+        # パターン開始最初のデータを省く
+        self.skip_first_data_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(skip_frame, text="開始時スキップ",
+                        variable=self.skip_first_data_var).pack(side=tk.LEFT, padx=5)
+
+        # 切替わり1周回前を省く
+        self.skip_before_change_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(skip_frame, text="切替前スキップ",
+                        variable=self.skip_before_change_var).pack(side=tk.LEFT, padx=5)
     
     def _create_data_selection_frame(self):
         """データ選択フレームを作成"""
@@ -177,6 +198,9 @@ class GraphTab(ttk.Frame):
         self.yaxis_mode_var.trace_add('write', self._on_setting_changed)
         self.yaxis_min_var.trace_add('write', self._on_setting_changed)
         self.yaxis_max_var.trace_add('write', self._on_setting_changed)
+        self.skip_after_change_var.trace_add('write', self._on_setting_changed)
+        self.skip_first_data_var.trace_add('write', self._on_setting_changed)
+        self.skip_before_change_var.trace_add('write', self._on_setting_changed)
     
     def _on_setting_changed(self, *args):
         """設定値が変更されたときに自動保存＆グラフ更新"""
@@ -199,6 +223,9 @@ class GraphTab(ttk.Frame):
                 self.yaxis_mode_var.set(settings.get('yaxis_mode', 'auto'))
                 self.yaxis_min_var.set(settings.get('yaxis_min', '-50'))
                 self.yaxis_max_var.set(settings.get('yaxis_max', '50'))
+                self.skip_after_change_var.set(settings.get('skip_after_change', '0'))
+                self.skip_first_data_var.set(settings.get('skip_first_data', False))
+                self.skip_before_change_var.set(settings.get('skip_before_change', False))
 
                 # CSVファイルパスを復元
                 csv_path = settings.get('csv_file_path', '')
@@ -221,6 +248,9 @@ class GraphTab(ttk.Frame):
                 'yaxis_mode': self.yaxis_mode_var.get(),
                 'yaxis_min': self.yaxis_min_var.get(),
                 'yaxis_max': self.yaxis_max_var.get(),
+                'skip_after_change': self.skip_after_change_var.get(),
+                'skip_first_data': self.skip_first_data_var.get(),
+                'skip_before_change': self.skip_before_change_var.get(),
                 'csv_file_path': self.file_path_var.get()
             }
             
@@ -242,12 +272,16 @@ class GraphTab(ttk.Frame):
             yaxis_mode = self.yaxis_mode_var.get()
             yaxis_min = float(self.yaxis_min_var.get()) if yaxis_mode == "manual" else None
             yaxis_max = float(self.yaxis_max_var.get()) if yaxis_mode == "manual" else None
+            skip_after_change = int(self.skip_after_change_var.get())
+            skip_first_data = self.skip_first_data_var.get()
+            skip_before_change = self.skip_before_change_var.get()
         except ValueError:
             return
 
         # 新しいプロッターを作成
         plotter = LSBGraphPlotter(bit_precision, pos_full, neg_full, lsb_per_div, ref_mode,
-                                  yaxis_mode, yaxis_min, yaxis_max)
+                                  yaxis_mode, yaxis_min, yaxis_max,
+                                  skip_after_change, skip_first_data, skip_before_change)
         
         # 存在するウィンドウのみ更新
         valid_windows = []
@@ -345,7 +379,7 @@ class GraphTab(ttk.Frame):
         if not self.csv_data:
             messagebox.showerror("エラー", "CSVファイルを読み込んでください")
             return
-        
+
         # 設定値を取得
         try:
             bit_precision = int(self.bit_precision_var.get())
@@ -356,13 +390,17 @@ class GraphTab(ttk.Frame):
             yaxis_mode = self.yaxis_mode_var.get()
             yaxis_min = float(self.yaxis_min_var.get()) if yaxis_mode == "manual" else None
             yaxis_max = float(self.yaxis_max_var.get()) if yaxis_mode == "manual" else None
+            skip_after_change = int(self.skip_after_change_var.get())
+            skip_first_data = self.skip_first_data_var.get()
+            skip_before_change = self.skip_before_change_var.get()
         except ValueError:
             messagebox.showerror("エラー", "設定値が不正です")
             return
 
         # LSBGraphPlotterを作成
         plotter = LSBGraphPlotter(bit_precision, pos_full, neg_full, lsb_per_div, ref_mode,
-                                  yaxis_mode, yaxis_min, yaxis_max)
+                                  yaxis_mode, yaxis_min, yaxis_max,
+                                  skip_after_change, skip_first_data, skip_before_change)
         
         # 選択されたデータをプロット
         plot_count = 0

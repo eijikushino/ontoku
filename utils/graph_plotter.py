@@ -24,7 +24,8 @@ class LSBGraphPlotter:
     """
 
     def __init__(self, bit_precision, pos_full_voltage, neg_full_voltage, lsb_per_div=10, ref_mode="ideal",
-                 yaxis_mode="auto", yaxis_min=None, yaxis_max=None):
+                 yaxis_mode="auto", yaxis_min=None, yaxis_max=None,
+                 skip_after_change=0, skip_first_data=False, skip_before_change=False):
         """
         Args:
             bit_precision: bit精度 (例: 24)
@@ -39,6 +40,9 @@ class LSBGraphPlotter:
             yaxis_mode: Y軸範囲モード ("auto" or "manual")
             yaxis_min: Y軸最小値 (LSB) - manualモード時のみ使用
             yaxis_max: Y軸最大値 (LSB) - manualモード時のみ使用
+            skip_after_change: コード切替後にスキップする行数 (デフォルト: 0)
+            skip_first_data: パターン開始最初のデータをスキップするか (デフォルト: False)
+            skip_before_change: 切替わり直前のデータをスキップするか (デフォルト: False)
         """
         self.bit_precision = bit_precision
         self.pos_full_voltage = pos_full_voltage
@@ -48,6 +52,9 @@ class LSBGraphPlotter:
         self.yaxis_mode = yaxis_mode
         self.yaxis_min = yaxis_min
         self.yaxis_max = yaxis_max
+        self.skip_after_change = skip_after_change
+        self.skip_first_data = skip_first_data
+        self.skip_before_change = skip_before_change
 
         # 1LSB電圧値を計算
         self.lsb_voltage = (pos_full_voltage - neg_full_voltage) / (2 ** bit_precision - 1)
@@ -269,6 +276,15 @@ class LSBGraphPlotter:
                 except (ValueError, KeyError) as e:
                     continue
 
+        # スキップ処理（切替後、開始時、切替前）
+        if (self.skip_after_change > 0 or self.skip_first_data or self.skip_before_change) and len(codes) > 0:
+            skip_indices = self._get_skip_indices(codes, datasets)
+            # スキップ対象でないインデックスのみ残す
+            elapsed_times = [elapsed_times[i] for i in range(len(elapsed_times)) if i not in skip_indices]
+            voltages = [voltages[i] for i in range(len(voltages)) if i not in skip_indices]
+            codes = [codes[i] for i in range(len(codes)) if i not in skip_indices]
+            datasets = [datasets[i] for i in range(len(datasets)) if i not in skip_indices]
+
         # 基準電圧モードに応じて計算
         if self.ref_mode == "all_avg":
             # 全平均モード: 全データの平均
@@ -301,6 +317,50 @@ class LSBGraphPlotter:
             lsb_values.append(lsb_value)
 
         return elapsed_times, lsb_values, codes, datasets
+
+    def _get_skip_indices(self, codes, datasets):
+        """
+        スキップするインデックスを取得（3種類のスキップ条件を処理）
+
+        Args:
+            codes: Codeのリスト
+            datasets: DataSetのリスト
+
+        Returns:
+            set: スキップするインデックスのセット
+        """
+        skip_indices = set()
+        n = len(codes)
+        if n == 0:
+            return skip_indices
+
+        # コード切り替え位置を検出
+        change_positions = []  # 切り替わりが発生したインデックス（新しいコードの最初）
+        prev_key = (codes[0], datasets[0])
+        for i in range(1, n):
+            key = (codes[i], datasets[i])
+            if key != prev_key:
+                change_positions.append(i)
+            prev_key = key
+
+        # 1. パターン開始最初のデータをスキップ（skip_after_change行数分）
+        if self.skip_first_data and self.skip_after_change > 0:
+            for i in range(min(self.skip_after_change, n)):
+                skip_indices.add(i)
+
+        # 2. コード切替後スキップ
+        if self.skip_after_change > 0:
+            for pos in change_positions:
+                for i in range(pos, min(pos + self.skip_after_change, n)):
+                    skip_indices.add(i)
+
+        # 3. 切替わり直前をスキップ（1行）
+        if self.skip_before_change:
+            for pos in change_positions:
+                if pos > 0:
+                    skip_indices.add(pos - 1)
+
+        return skip_indices
 
     def _calculate_all_average(self, voltages, codes, datasets):
         """
