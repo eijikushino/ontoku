@@ -1,0 +1,16 @@
+No,Enabled,DataSet,Pole,Code,Time(min)
+1,No,Position,Pos,Center,9
+2,No,LBC,Pos,Center,1
+3,No,Position,Neg,Center,8
+4,No,LBC,Neg,Center,1
+5,No,Position,Pos,+Full,6
+6,No,Position,Pos,Center,1
+7,No,Position,Pos,Center,1
+8,No,Position,Pos,+Full,1
+9,No,Position,Pos,Center,1
+10,No,Position,Pos,Center,1
+11,No,Position,Pos,Center,4666
+12,No,Position,Pos,-Full,10234
+13,No,Position,Pos,Center,4
+14,No,Position,Pos,Center,5
+15,No,Position,Pos,Center,99

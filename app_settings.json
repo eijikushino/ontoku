@@ -1,0 +1,61 @@
+{
+    "gpib": {
+        "3458a_resource": "GPIB0::6::INSTR",
+        "3499b_resource": "GPIB0::9::INSTR"
+    },
+    "test": {
+        "save_folder": "C:/Users/e-kus/Desktop/AI/ClaudeCode/温特アプリ/温特/pattern",
+        "filename": "pattern",
+        "def_checks": [
+            true,
+            false,
+            false,
+            false,
+            false,
+            false
+        ],
+        "scanner_channels_pos": [
+            "CH01",
+            "CH03",
+            "CH05",
+            "CH03",
+            "ー",
+            "ー"
+        ],
+        "scanner_channels_neg": [
+            "CH02",
+            "CH04",
+            "CH04",
+            "CH00",
+            "ー",
+            "ー"
+        ]
+    },
+    "save_config": {
+        "save_dir": "C:/Users/e-kus/Desktop/AI/ClaudeCode/温特アプリ/csv"
+    },
+    "comm_profiles": {
+        "1": {
+            "serial_numbers": {
+                "DEF0_sn": "DFH904",
+                "DEF1_sn": "DFH002",
+                "DEF2_sn": "DFH003",
+                "DEF3_sn": "DFH111",
+                "DEF4_sn": "DFH222",
+                "DEF5_sn": "DFH456"
+            },
+            "save_config": {
+                "file_name": "posneg切り替え9.csv"
+            },
+            "device_type": "main"
+        }
+    },
+    "measurement_window": {
+        "switch_delay_sec": 1.0,
+        "dmm_delay_sec": 1.5,
+        "sync_with_pattern": true
+    },
+    "scanner": {
+        "relay_switch_delay": 1.0
+    }
+}

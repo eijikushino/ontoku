@@ -1,0 +1,11 @@
+{
+    "bit_precision": "20",
+    "pos_full_voltage": "10",
+    "neg_full_voltage": "-10",
+    "lsb_per_div": "1",
+    "ref_mode": "first_avg",
+    "yaxis_mode": "manual",
+    "yaxis_min": "-5",
+    "yaxis_max": "5",
+    "csv_file_path": "C:/Users/e-kus/Desktop/AI/ClaudeCode/\u6e29\u7279\u30a2\u30d7\u30ea/csv/posneg\u5207\u308a\u66ff\u30489_4.csv"
+}
