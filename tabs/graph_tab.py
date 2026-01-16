@@ -25,6 +25,7 @@ class GraphTab(ttk.Frame):
         
         # データ保持
         self.csv_data = None
+        self.temp_csv_data = None  # 温度CSVデータ
         self.serial_numbers = []
         self.checkboxes = {}
         self.graph_windows = []  # 開いているグラフウィンドウのリスト
@@ -59,12 +60,26 @@ class GraphTab(ttk.Frame):
         """ファイル選択フレームを作成"""
         file_frame = ttk.LabelFrame(self, text="CSVファイル選択", padding=10)
         file_frame.pack(fill=tk.X, padx=10, pady=5)
-        
+
+        # 測定CSVファイル選択
+        measurement_frame = ttk.Frame(file_frame)
+        measurement_frame.pack(fill=tk.X, pady=2)
+        ttk.Label(measurement_frame, text="測定CSV:", width=10).pack(side=tk.LEFT, padx=5)
         self.file_path_var = tk.StringVar()
-        ttk.Entry(file_frame, textvariable=self.file_path_var, state='readonly', 
-                  width=80).pack(side=tk.LEFT, padx=5, fill=tk.X, expand=True)
-        ttk.Button(file_frame, text="読み込み", 
+        ttk.Entry(measurement_frame, textvariable=self.file_path_var, state='readonly',
+                  width=70).pack(side=tk.LEFT, padx=5, fill=tk.X, expand=True)
+        ttk.Button(measurement_frame, text="読み込み",
                    command=self.load_csv_file).pack(side=tk.LEFT, padx=5)
+
+        # 温度CSVファイル選択
+        temp_frame = ttk.Frame(file_frame)
+        temp_frame.pack(fill=tk.X, pady=2)
+        ttk.Label(temp_frame, text="温度CSV:", width=10).pack(side=tk.LEFT, padx=5)
+        self.temp_file_path_var = tk.StringVar()
+        ttk.Entry(temp_frame, textvariable=self.temp_file_path_var, state='readonly',
+                  width=70).pack(side=tk.LEFT, padx=5, fill=tk.X, expand=True)
+        ttk.Button(temp_frame, text="読み込み",
+                   command=self.load_temp_csv_file).pack(side=tk.LEFT, padx=5)
     
     def _create_settings_frame(self):
         """設定フレームを作成"""
@@ -183,9 +198,11 @@ class GraphTab(ttk.Frame):
         """グラフ表示ボタンを作成"""
         button_frame = ttk.Frame(self)
         button_frame.pack(fill=tk.X, padx=10, pady=5)
-        
-        ttk.Button(button_frame, text="選択したデータをグラフ表示", 
-                   command=self.plot_selected_data).pack(pady=5)
+
+        ttk.Button(button_frame, text="選択したデータをグラフ表示",
+                   command=self.plot_selected_data).pack(side=tk.LEFT, padx=5, pady=5)
+        ttk.Button(button_frame, text="温特グラフ表示",
+                   command=self.plot_temperature_graph).pack(side=tk.LEFT, padx=5, pady=5)
     
     def _setup_auto_save(self):
         """設定値の自動保存を設定"""
@@ -233,6 +250,12 @@ class GraphTab(ttk.Frame):
                     self.file_path_var.set(csv_path)
                     self._load_csv_from_path(csv_path, show_message=False)
 
+                # 温度CSVファイルパスを復元
+                temp_csv_path = settings.get('temp_csv_file_path', '')
+                if temp_csv_path and os.path.exists(temp_csv_path):
+                    self.temp_file_path_var.set(temp_csv_path)
+                    self._load_temp_csv_from_path(temp_csv_path, show_message=False)
+
             except Exception as e:
                 print(f"設定の読み込みに失敗しました: {e}")
     
@@ -251,7 +274,8 @@ class GraphTab(ttk.Frame):
                 'skip_after_change': self.skip_after_change_var.get(),
                 'skip_first_data': self.skip_first_data_var.get(),
                 'skip_before_change': self.skip_before_change_var.get(),
-                'csv_file_path': self.file_path_var.get()
+                'csv_file_path': self.file_path_var.get(),
+                'temp_csv_file_path': self.temp_file_path_var.get()
             }
             
             with open(self.SETTINGS_FILE, 'w', encoding='utf-8') as f:
@@ -412,5 +436,84 @@ class GraphTab(ttk.Frame):
                     self.graph_windows.append(window)
                     plot_count += 1
         
+        if plot_count == 0:
+            messagebox.showwarning("警告", "表示するデータを選択してください")
+
+    def load_temp_csv_file(self):
+        """温度CSVファイルを選択して読み込み"""
+        filename = filedialog.askopenfilename(
+            title="温度CSVファイルを選択",
+            filetypes=[("CSV files", "*.csv"), ("All files", "*.*")]
+        )
+
+        if not filename:
+            return
+
+        self.temp_file_path_var.set(filename)
+        self._load_temp_csv_from_path(filename, show_message=True)
+        self.save_settings()
+
+    def _load_temp_csv_from_path(self, filename, show_message=True):
+        """指定パスから温度CSVファイルを読み込み"""
+        try:
+            with open(filename, 'r', encoding='utf-8') as f:
+                reader = csv.DictReader(f)
+                self.temp_csv_data = list(reader)
+
+            if not self.temp_csv_data:
+                if show_message:
+                    messagebox.showerror("エラー", "温度CSVファイルにデータがありません")
+                return
+
+            if show_message:
+                messagebox.showinfo("成功", f"温度CSVを読み込みました\n{len(self.temp_csv_data)}行のデータ")
+
+        except Exception as e:
+            if show_message:
+                messagebox.showerror("エラー", f"温度CSVの読み込みに失敗しました:\n{str(e)}")
+
+    def plot_temperature_graph(self):
+        """温特グラフを表示（2軸: LSB変動 + 温度差）"""
+        if not self.csv_data:
+            messagebox.showerror("エラー", "測定CSVファイルを読み込んでください")
+            return
+
+        if not self.temp_csv_data:
+            messagebox.showerror("エラー", "温度CSVファイルを読み込んでください")
+            return
+
+        # 設定値を取得
+        try:
+            bit_precision = int(self.bit_precision_var.get())
+            pos_full = float(self.pos_full_var.get())
+            neg_full = float(self.neg_full_var.get())
+            lsb_per_div = float(self.lsb_per_div_var.get())
+            ref_mode = self.ref_mode_var.get()
+            yaxis_mode = self.yaxis_mode_var.get()
+            yaxis_min = float(self.yaxis_min_var.get()) if yaxis_mode == "manual" else None
+            yaxis_max = float(self.yaxis_max_var.get()) if yaxis_mode == "manual" else None
+            skip_after_change = int(self.skip_after_change_var.get())
+            skip_first_data = self.skip_first_data_var.get()
+            skip_before_change = self.skip_before_change_var.get()
+        except ValueError:
+            messagebox.showerror("エラー", "設定値が不正です")
+            return
+
+        # LSBGraphPlotterを作成
+        plotter = LSBGraphPlotter(bit_precision, pos_full, neg_full, lsb_per_div, ref_mode,
+                                  yaxis_mode, yaxis_min, yaxis_max,
+                                  skip_after_change, skip_first_data, skip_before_change)
+
+        # 選択されたデータをプロット
+        plot_count = 0
+        for key, var in self.checkboxes.items():
+            if var.get():
+                serial, pole = key.rsplit('_', 1)
+                result = plotter.plot_temperature_characteristic(
+                    self.csv_data, self.temp_csv_data, serial, pole
+                )
+                if result:
+                    plot_count += 1
+
         if plot_count == 0:
             messagebox.showwarning("警告", "表示するデータを選択してください")

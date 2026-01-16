@@ -562,7 +562,32 @@ class LSBGraphPlotter:
 
         return True  # 成功を返す
 
-    def _plot_by_code_with_lines(self, ax, elapsed_times, lsb_values, codes, datasets):
+    def _get_code_color(self, code_str):
+        """
+        コード文字列から色を取得
+
+        Args:
+            code_str: コード文字列
+
+        Returns:
+            色（matplotlib形式）
+        """
+        # 括弧内のHEX値を抽出
+        bracket_content = self.extract_bracket_content(code_str)
+        hex_upper = bracket_content.upper()
+
+        # コードに基づく色の割り当て
+        if hex_upper in ['FFFFF', 'FFFF', '+']:
+            return '#006400'  # 深緑 (darkgreen)
+        elif hex_upper in ['00000', '0000', '-']:
+            return '#FF0000'  # 明るい赤 (red)
+        elif hex_upper in ['80000', '8000', 'C']:
+            return '#00008B'  # 濃い青 (darkblue)
+        else:
+            # その他のManual値はグレー系
+            return '#808080'  # グレー
+
+    def _plot_by_code_with_lines(self, ax, elapsed_times, lsb_values, codes, datasets, temp_char_mode=False):
         """
         Codeごとに色分けしてプロット（連続区間のみ線で結ぶ）- 最適化版
 
@@ -572,6 +597,7 @@ class LSBGraphPlotter:
             lsb_values: LSB値のリスト
             codes: Codeのリスト
             datasets: DataSetのリスト (Position/LBC)
+            temp_char_mode: 温特グラフモード（凡例からPosition:を除去）
         """
         # NumPy配列に変換（高速化）
         times_array = np.array(elapsed_times)
@@ -587,8 +613,11 @@ class LSBGraphPlotter:
                 seen.add(key)
                 unique_keys.append(key)
 
-        # tab10は10色のパレット、インデックス0-9で順番に取得
-        colors = [plt.cm.tab10(i % 10) for i in range(len(unique_keys))]
+        # 色を取得（温特グラフモードは固定色、それ以外はtab10パレット）
+        if temp_char_mode:
+            colors = [self._get_code_color(code) for code, dataset in unique_keys]
+        else:
+            colors = [plt.cm.tab10(i % 10) for i in range(len(unique_keys))]
 
         # ラベル重複回避
         used_labels = set()
@@ -596,7 +625,7 @@ class LSBGraphPlotter:
         for (code, dataset), color in zip(unique_keys, colors):
             # 凡例ラベルを作成
             if code == "---" or dataset == "---":
-                legend_label = "---:---"
+                legend_label = "---"
             else:
                 prefix = "Position" if dataset == "Position" else "LBC"
 
@@ -605,22 +634,27 @@ class LSBGraphPlotter:
                     bracket_content = self.extract_bracket_content(code)
                     hex_value = bracket_content.replace("Manual", "").strip().strip("()")
                     if hex_value:
-                        legend_label = f"{prefix}:{hex_value}"
+                        hex_label = hex_value
                     else:
-                        legend_label = f"{prefix}:----"
+                        hex_label = "----"
                 else:
                     bracket_content = self.extract_bracket_content(code)
 
                     try:
                         int(bracket_content, 16)
-                        legend_label = f"{prefix}:{bracket_content}"
+                        hex_label = bracket_content
                     except ValueError:
                         hex_values = {
                             "Position": {"+": "FFFFF", "C": "80000", "-": "00000", "H": "FFFFF"},
                             "LBC": {"+": "FFFF", "C": "8000", "-": "0000", "H": "FFFF"}
                         }
-                        hex_val = hex_values.get(dataset, {}).get(bracket_content, bracket_content)
-                        legend_label = f"{prefix}:{hex_val}"
+                        hex_label = hex_values.get(dataset, {}).get(bracket_content, bracket_content)
+
+                # 温特グラフモードではPosition:を省略
+                if temp_char_mode:
+                    legend_label = hex_label
+                else:
+                    legend_label = f"{prefix}:{hex_label}"
 
             # 該当するインデックスを抽出
             mask = (codes_array == code) & (datasets_array == dataset)
@@ -780,3 +814,247 @@ class LSBGraphPlotter:
         return self.create_plot_window(
             parent, serial, pole, elapsed_times, lsb_values, codes, datasets
         )
+
+    def plot_temperature_characteristic(self, csv_data, temp_csv_data, serial, pole):
+        """
+        温特グラフを表示（2軸: LSB変動 + 温度差）
+
+        Args:
+            csv_data: 測定CSVデータ
+            temp_csv_data: 温度CSVデータ
+            serial: シリアルNo.
+            pole: "POS" or "NEG"
+
+        Returns:
+            True: 成功, None: 失敗
+        """
+        column_name = f"{serial}_{pole}"
+
+        # 測定データからLSBデータを抽出
+        elapsed_times, lsb_values, codes, datasets = self.extract_data_from_csv(
+            csv_data, serial, pole, column_name
+        )
+
+        if not elapsed_times:
+            return None
+
+        # 温度データを抽出・結合
+        temp_times, temp_values = self._extract_temperature_data(temp_csv_data, csv_data)
+
+        if not temp_times:
+            return None
+
+        # 2軸グラフを作成
+        fig, ax1 = plt.subplots(figsize=(12, 6))
+
+        # 左軸: LSB変動（コードごとに色分け、温特グラフ用凡例）
+        self._plot_by_code_with_lines(ax1, elapsed_times, lsb_values, codes, datasets, temp_char_mode=True)
+        ax1.set_xlabel('時間 10分/Div')
+        ax1.set_ylabel('変動値 20bit@LSB/Div', color='black')
+        ax1.tick_params(axis='y', labelcolor='black')
+
+        # X軸フォーマット（データ範囲に合わせる、余白なし、目盛りラベルなし）
+        max_minutes = max(elapsed_times) if elapsed_times else 60
+        min_minutes = min(elapsed_times) if elapsed_times else 0
+        self._format_time_axis_temp_char(ax1, min_minutes, max_minutes)
+
+        # 左軸: ±8LSBで固定、2LSBごとに目盛り
+        ax1.set_ylim(-8, 8)
+        ax1.set_yticks(np.arange(-8, 10, 2))  # -8, -6, -4, -2, 0, 2, 4, 6, 8
+        ax1.ticklabel_format(style='plain', axis='y', useOffset=False)
+        ax1.grid(True, axis='y', alpha=0.5, linestyle='-', linewidth=0.5)
+
+        # 右軸: 温度
+        ax2 = ax1.twinx()
+        ax2.plot(temp_times, temp_values, color='#8B4513', linestyle='-',
+                 linewidth=1.5, label='温度', alpha=0.8)
+        ax2.set_ylabel('温度(℃)', color='black', rotation=270, labelpad=15)
+        ax2.tick_params(axis='y', labelcolor='black')
+        ax2.set_ylim(-8, 8)  # 温度軸の範囲を±8に固定
+        ax2.set_yticks(np.arange(-8, 10, 2))  # 2℃ごとに目盛り
+
+        # タイトル
+        fig.suptitle(f'1PB397MK2DFH_{serial} {pole} 温度特性試験結果')
+
+        # 凡例を統合
+        lines1, labels1 = ax1.get_legend_handles_labels()
+        lines2, labels2 = ax2.get_legend_handles_labels()
+        ax1.legend(lines1 + lines2, labels1 + labels2, loc='upper left')
+
+        fig.tight_layout()
+        plt.show(block=False)
+
+        return True
+
+    def _extract_temperature_data(self, temp_csv_data, measurement_csv_data):
+        """
+        温度CSVデータから経過時間と温度を抽出
+
+        Args:
+            temp_csv_data: 温度CSVデータ（測定順と温度を含む）
+            measurement_csv_data: 測定CSVデータ（タイムスタンプ取得用）
+
+        Returns:
+            (elapsed_times, temp_values): 経過時間（分）と温度のリスト
+        """
+        elapsed_times = []
+        temp_values = []
+
+        # 温度CSVのカラム名を自動検出
+        temp_column = None
+        index_column = None
+        if temp_csv_data:
+            first_row = temp_csv_data[0]
+            for key in first_row.keys():
+                # BOM付きの場合も対応
+                clean_key = key.replace('\ufeff', '').strip()
+                if 'temp' in clean_key.lower() or '温度' in clean_key:
+                    temp_column = key
+                if '測定順' in clean_key or 'index' in clean_key.lower() or 'no' in clean_key.lower():
+                    index_column = key
+
+        # カラム名が見つからない場合、最初の2列を使用
+        if temp_column is None or index_column is None:
+            if temp_csv_data:
+                keys = list(temp_csv_data[0].keys())
+                if len(keys) >= 2:
+                    index_column = keys[0]
+                    temp_column = keys[1]
+
+        if temp_column is None:
+            return [], []
+
+        # 測定CSVから経過時間を計算（タイムスタンプベース）
+        measurement_times = []
+        base_timestamp = None
+        for row in measurement_csv_data:
+            timestamp_str = row.get('Timestamp', '')
+            if timestamp_str:
+                try:
+                    timestamp = self.parse_timestamp(timestamp_str)
+                    if base_timestamp is None:
+                        base_timestamp = timestamp
+                    elapsed_min = self.calculate_elapsed_time(timestamp, base_timestamp)
+                    measurement_times.append(elapsed_min)
+                except:
+                    pass
+
+        # 温度データを測定順に対応させる
+        total_measurement_points = len(measurement_times)
+        total_temp_points = len(temp_csv_data)
+
+        if total_measurement_points == 0 or total_temp_points == 0:
+            return [], []
+
+        # 温度データを辞書に格納（測定順 → 温度）
+        temp_dict = {}
+        for row in temp_csv_data:
+            try:
+                idx_str = row.get(index_column, '').strip()
+                temp_str = row.get(temp_column, '').strip()
+                if idx_str and temp_str:
+                    idx = int(idx_str)
+                    temp_value = float(temp_str)
+                    temp_dict[idx] = temp_value
+            except (ValueError, KeyError):
+                continue
+
+        # 測定点数と温度点数が同じ場合、1:1で対応
+        if total_measurement_points == total_temp_points:
+            for i, elapsed_min in enumerate(measurement_times):
+                idx = i + 1  # 測定順は1から始まる
+                if idx in temp_dict:
+                    elapsed_times.append(elapsed_min)
+                    temp_values.append(temp_dict[idx])
+        else:
+            # 点数が異なる場合も測定順で対応（存在する分だけ）
+            for i, elapsed_min in enumerate(measurement_times):
+                idx = i + 1
+                if idx in temp_dict:
+                    elapsed_times.append(elapsed_min)
+                    temp_values.append(temp_dict[idx])
+
+        return elapsed_times, temp_values
+
+    def _format_time_axis_10min(self, ax, max_minutes):
+        """
+        X軸を10分/div、25divでフォーマット
+
+        Args:
+            ax: Matplotlibのaxisオブジェクト
+            max_minutes: 最大経過時間（分）- 未使用、250分固定
+        """
+        tick_interval = 10  # 10分/div
+        total_divs = 25     # 25div固定
+        max_time = tick_interval * total_divs  # 250分
+
+        # 目盛り位置を計算（0, 10, 20, ... 250）
+        ticks = np.arange(0, max_time + tick_interval, tick_interval)
+
+        # 目盛りラベルを「hour min」形式に変換
+        labels = [self.format_time_label(t) for t in ticks]
+
+        ax.set_xticks(ticks)
+        ax.set_xticklabels(labels, rotation=45, ha='right', fontsize=8)
+        ax.set_xlim(0, max_time)
+
+    def _format_time_axis_auto(self, ax, min_minutes, max_minutes):
+        """
+        X軸をデータ範囲に合わせてフォーマット（余白なし）
+
+        Args:
+            ax: Matplotlibのaxisオブジェクト
+            min_minutes: 最小経過時間（分）
+            max_minutes: 最大経過時間（分）
+        """
+        data_range = max_minutes - min_minutes
+
+        # 適切な目盛り間隔を決定
+        if data_range < 30:
+            tick_interval = 5
+        elif data_range < 60:
+            tick_interval = 10
+        elif data_range < 180:
+            tick_interval = 30
+        elif data_range < 600:
+            tick_interval = 60
+        else:
+            tick_interval = 120
+
+        # 目盛り位置を計算（データ範囲に合わせる）
+        start_tick = int(min_minutes / tick_interval) * tick_interval
+        end_tick = int(np.ceil(max_minutes / tick_interval)) * tick_interval
+        ticks = np.arange(start_tick, end_tick + tick_interval, tick_interval)
+
+        # 目盛りラベルを「hour min」形式に変換
+        labels = [self.format_time_label(t) for t in ticks]
+
+        ax.set_xticks(ticks)
+        ax.set_xticklabels(labels, rotation=45, ha='right', fontsize=8)
+        # データ範囲に合わせてX軸を設定（余白なし）
+        ax.set_xlim(min_minutes, max_minutes)
+
+    def _format_time_axis_temp_char(self, ax, min_minutes, max_minutes):
+        """
+        温特グラフ用X軸フォーマット（10分ごとの補助線、目盛りラベルなし）
+
+        Args:
+            ax: Matplotlibのaxisオブジェクト
+            min_minutes: 最小経過時間（分）
+            max_minutes: 最大経過時間（分）
+        """
+        tick_interval = 10  # 10分/Div
+
+        # 目盛り位置を計算（10分ごと）
+        start_tick = int(min_minutes / tick_interval) * tick_interval
+        end_tick = int(np.ceil(max_minutes / tick_interval)) * tick_interval
+        ticks = np.arange(start_tick, end_tick + tick_interval, tick_interval)
+
+        ax.set_xticks(ticks)
+        ax.set_xticklabels(['' for _ in ticks])  # 目盛りラベルなし
+        # データ範囲に合わせてX軸を設定（余白なし）
+        ax.set_xlim(min_minutes, max_minutes)
+
+        # 10分ごとに補助線（グリッド）を追加
+        ax.grid(True, axis='x', alpha=0.5, linestyle='-', linewidth=0.5)
+        ax.grid(True, axis='y', alpha=0.3, linestyle='-', linewidth=0.5)
