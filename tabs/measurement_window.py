@@ -881,22 +881,34 @@ class MeasurementWindow(tk.Toplevel):
         self.code_label.config(text=pattern_info['code'])
 
         # ★★★ パターン実行同期オプションが有効な場合 ★★★
-        if self.sync_with_pattern_var.get() and self.is_measuring:
+        if self.sync_with_pattern_var.get():
             current_pattern_running = (
                 hasattr(self.test_tab, 'is_running') and self.test_tab.is_running
             )
 
-            # パターン実行開始を検知 → 保存開始
+            # パターン実行開始を検知
             if current_pattern_running and not self.last_pattern_running_state:
-                if not self.is_csv_logging:
+                # 計測していない場合は、まず計測を開始
+                if not self.is_measuring:
+                    self.log("パターン実行開始を検知 → 計測自動開始", "INFO")
+                    self.start_measurement()
+                    # start_measurementが成功したかチェック
+                    if self.is_measuring and not self.is_csv_logging:
+                        self.log("計測開始成功 → 保存自動開始", "INFO")
+                        self.start_csv_logging()
+                elif not self.is_csv_logging:
+                    # 計測中だが保存していない場合は保存開始
                     self.log("パターン実行開始を検知 → 保存自動開始", "INFO")
                     self.start_csv_logging()
 
-            # パターン実行終了を検知 → 保存終了
+            # パターン実行終了を検知 → 保存終了、計測終了
             elif not current_pattern_running and self.last_pattern_running_state:
                 if self.is_csv_logging:
                     self.log("パターン実行終了を検知 → 保存自動終了", "INFO")
                     self.stop_csv_logging(show_dialog=False)
+                if self.is_measuring:
+                    self.log("パターン実行終了を検知 → 計測自動終了", "INFO")
+                    self.stop_measurement()
 
             self.last_pattern_running_state = current_pattern_running
 

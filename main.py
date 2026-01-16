@@ -154,7 +154,7 @@ class MainApplication(tk.Tk):
         
         ttk.Label(about_window, text="DEF Command Set App", 
                   font=("", 12, "bold")).pack(pady=5)
-        ttk.Label(about_window, text="Version 1.0").pack(pady=3)
+        ttk.Label(about_window, text="Version 1.12").pack(pady=3)
         ttk.Label(about_window, text="・パターン試験").pack(pady=1)
         ttk.Label(about_window, text="・温特グラフ表示").pack(pady=1)
         
