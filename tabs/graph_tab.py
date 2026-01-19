@@ -190,40 +190,20 @@ class GraphTab(ttk.Frame):
         temp_settings_frame = ttk.LabelFrame(settings_container, text="温特グラフ設定", padding=15)
         temp_settings_frame.grid(row=0, column=1, sticky="nsew", padx=(5, 0))
 
+        # 固定値・初期値の注記（Y軸関連を上に）
+        ttk.Label(temp_settings_frame, text="【固定値・初期値】",
+                  font=('', 9, 'bold')).pack(anchor=tk.W, pady=(0, 8))
+        ttk.Label(temp_settings_frame, text="・Y軸(LSB)初期値: ±8LSB, 2LSB/Div").pack(anchor=tk.W, padx=15, pady=1)
+        ttk.Label(temp_settings_frame, text="・Y軸(温度): ±8℃, 2℃/Div").pack(anchor=tk.W, padx=15, pady=1)
+        ttk.Label(temp_settings_frame, text="・基準電圧モード: 初回平均").pack(anchor=tk.W, padx=15, pady=1)
+        ttk.Label(temp_settings_frame, text="・X軸: 10分/Div").pack(anchor=tk.W, padx=15, pady=1)
+
         # 温特グラフで使用する設定（共通設定を参照）
+        ttk.Separator(temp_settings_frame, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=12)
         ttk.Label(temp_settings_frame, text="【共通設定を使用】",
                   font=('', 9, 'bold')).pack(anchor=tk.W, pady=(0, 8))
         ttk.Label(temp_settings_frame, text="・Bit精度").pack(anchor=tk.W, padx=15, pady=1)
-        ttk.Label(temp_settings_frame, text="・基準電圧 (+Full/-Full)").pack(anchor=tk.W, padx=15, pady=1)
         ttk.Label(temp_settings_frame, text="・スキップ設定").pack(anchor=tk.W, padx=15, pady=1)
-
-        # Y軸(LSB)設定
-        ttk.Separator(temp_settings_frame, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=12)
-        ttk.Label(temp_settings_frame, text="【Y軸(LSB)設定】",
-                  font=('', 9, 'bold')).pack(anchor=tk.W, pady=(0, 8))
-
-        # 選択式: デフォルト or 共通設定
-        self.temp_yaxis_mode_var = tk.StringVar(value="default")
-        temp_yaxis_radio_frame = ttk.Frame(temp_settings_frame)
-        temp_yaxis_radio_frame.pack(fill=tk.X, pady=3)
-        ttk.Radiobutton(temp_yaxis_radio_frame, text="デフォルト(±8LSB 2LSB/Div)",
-                        variable=self.temp_yaxis_mode_var,
-                        value="default").pack(side=tk.LEFT, padx=10)
-        ttk.Radiobutton(temp_yaxis_radio_frame, text="共通設定を使用",
-                        variable=self.temp_yaxis_mode_var,
-                        value="common").pack(side=tk.LEFT, padx=10)
-
-        # デフォルト値は保持（内部で使用）
-        self.temp_yaxis_min_var = tk.StringVar(value="-8")
-        self.temp_yaxis_max_var = tk.StringVar(value="8")
-
-        # 固定値の注記
-        ttk.Separator(temp_settings_frame, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=12)
-        ttk.Label(temp_settings_frame, text="【固定値】",
-                  font=('', 9, 'bold')).pack(anchor=tk.W, pady=(0, 8))
-        ttk.Label(temp_settings_frame, text="・基準電圧モード: 初回平均").pack(anchor=tk.W, padx=15, pady=1)
-        ttk.Label(temp_settings_frame, text="・Y軸(温度): ±8℃, 2℃/Div").pack(anchor=tk.W, padx=15, pady=1)
-        ttk.Label(temp_settings_frame, text="・X軸: 10分/Div").pack(anchor=tk.W, padx=15, pady=1)
 
         # 温特グラフ表示ボタン（温特グラフ設定内）
         ttk.Separator(temp_settings_frame, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=8)
@@ -265,8 +245,6 @@ class GraphTab(ttk.Frame):
         self.skip_after_change_var.trace_add('write', self._on_setting_changed)
         self.skip_first_data_var.trace_add('write', self._on_setting_changed)
         self.skip_before_change_var.trace_add('write', self._on_setting_changed)
-        # 温特グラフ用Y軸設定
-        self.temp_yaxis_mode_var.trace_add('write', self._on_setting_changed)
     
     def _on_setting_changed(self, *args):
         """設定値が変更されたときに自動保存＆グラフ更新"""
@@ -292,8 +270,6 @@ class GraphTab(ttk.Frame):
                 self.skip_after_change_var.set(settings.get('skip_after_change', '0'))
                 self.skip_first_data_var.set(settings.get('skip_first_data', False))
                 self.skip_before_change_var.set(settings.get('skip_before_change', False))
-                # 温特グラフ用Y軸設定（起動時は常にデフォルト）
-                # self.temp_yaxis_mode_var は初期値 "default" のまま
 
                 # CSVファイルパスを復元
                 csv_path = settings.get('csv_file_path', '')
@@ -325,7 +301,6 @@ class GraphTab(ttk.Frame):
                 'skip_after_change': self.skip_after_change_var.get(),
                 'skip_first_data': self.skip_first_data_var.get(),
                 'skip_before_change': self.skip_before_change_var.get(),
-                'temp_yaxis_mode': self.temp_yaxis_mode_var.get(),
                 'csv_file_path': self.file_path_var.get(),
                 'temp_csv_file_path': self.temp_file_path_var.get()
             }
@@ -525,7 +500,7 @@ class GraphTab(ttk.Frame):
                 messagebox.showerror("エラー", f"温度CSVの読み込みに失敗しました:\n{str(e)}")
 
     def plot_temperature_graph(self):
-        """温特グラフを表示（2軸: LSB変動 + 温度差）"""
+        """温特グラフを表示（2軸: LSB変動 + 温度差）+ 設定画面"""
         if not self.csv_data:
             messagebox.showerror("エラー", "測定CSVファイルを読み込んでください")
             return
@@ -534,31 +509,178 @@ class GraphTab(ttk.Frame):
             messagebox.showerror("エラー", "温度CSVファイルを読み込んでください")
             return
 
-        # 設定値を取得（温特グラフ用）
+        # 選択されたデータを確認
+        selected_keys = [key for key, var in self.checkboxes.items() if var.get()]
+        if not selected_keys:
+            messagebox.showwarning("警告", "表示するデータを選択してください")
+            return
+
+        # 設定画面ウィンドウを作成
+        self._create_temp_graph_settings_window(selected_keys)
+
+    def _create_temp_graph_settings_window(self, selected_keys):
+        """温特グラフ設定画面ウィンドウを作成"""
+        # 既存のウィンドウがあれば閉じる
+        if hasattr(self, 'temp_settings_window') and self.temp_settings_window:
+            try:
+                if self.temp_settings_window.winfo_exists():
+                    self.temp_settings_window.destroy()
+            except:
+                pass
+
+        # 設定画面ウィンドウ（温特グラフと被らないように右端に配置）
+        self.temp_settings_window = tk.Toplevel(self)
+        self.temp_settings_window.title("温特グラフ詳細設定")
+        # 画面右端に配置
+        screen_width = self.temp_settings_window.winfo_screenwidth()
+        self.temp_settings_window.geometry(f"420x560+{screen_width - 450}+50")
+        self.temp_settings_window.resizable(False, False)
+
+        # 選択されたキーを保存
+        self.temp_graph_selected_keys = selected_keys
+
+        # Y軸設定用変数（デフォルト選択時用）
+        self.temp_yaxis_select_var = tk.StringVar(value="default")
+
+        main_frame = ttk.Frame(self.temp_settings_window, padding=15)
+        main_frame.pack(fill=tk.BOTH, expand=True)
+
+        # 計算結果表示エリア（POS/NEG別）
+        calc_frame = ttk.LabelFrame(main_frame, text="LSB電圧計算結果（実測値）", padding=10)
+        calc_frame.pack(fill=tk.X, pady=(0, 10))
+
+        # POS計算結果
+        ttk.Label(calc_frame, text="【POS】", font=('', 9, 'bold')).pack(anchor=tk.W)
+        self.calc_pos_fffff_label = ttk.Label(calc_frame, text="  +Full平均: ---")
+        self.calc_pos_fffff_label.pack(anchor=tk.W, pady=1)
+        self.calc_pos_zero_label = ttk.Label(calc_frame, text="  -Full平均: ---")
+        self.calc_pos_zero_label.pack(anchor=tk.W, pady=1)
+        self.calc_pos_lsb_label = ttk.Label(calc_frame, text="  LSB電圧: ---")
+        self.calc_pos_lsb_label.pack(anchor=tk.W, pady=1)
+
+        # NEG計算結果
+        ttk.Label(calc_frame, text="【NEG】", font=('', 9, 'bold')).pack(anchor=tk.W, pady=(5, 0))
+        self.calc_neg_fffff_label = ttk.Label(calc_frame, text="  +Full平均: ---")
+        self.calc_neg_fffff_label.pack(anchor=tk.W, pady=1)
+        self.calc_neg_zero_label = ttk.Label(calc_frame, text="  -Full平均: ---")
+        self.calc_neg_zero_label.pack(anchor=tk.W, pady=1)
+        self.calc_neg_lsb_label = ttk.Label(calc_frame, text="  LSB電圧: ---")
+        self.calc_neg_lsb_label.pack(anchor=tk.W, pady=1)
+
+        # Y軸(LSB)設定エリア
+        yaxis_frame = ttk.LabelFrame(main_frame, text="Y軸(LSB)設定", padding=10)
+        yaxis_frame.pack(fill=tk.X, pady=(0, 10))
+
+        # Y軸範囲（1行目：デフォルト）
+        yaxis_row0 = ttk.Frame(yaxis_frame)
+        yaxis_row0.pack(fill=tk.X, pady=3)
+        ttk.Label(yaxis_row0, text="Y軸範囲:", width=12).pack(side=tk.LEFT)
+        ttk.Radiobutton(yaxis_row0, text="デフォルト(±8LSB 2LSB/Div)",
+                        variable=self.temp_yaxis_select_var, value="default").pack(side=tk.LEFT)
+
+        # Y軸範囲（2行目：オート）
+        yaxis_row1 = ttk.Frame(yaxis_frame)
+        yaxis_row1.pack(fill=tk.X, pady=3)
+        ttk.Label(yaxis_row1, text="", width=12).pack(side=tk.LEFT)
+        ttk.Radiobutton(yaxis_row1, text="オート", variable=self.temp_yaxis_select_var,
+                        value="auto").pack(side=tk.LEFT)
+
+        # Y軸範囲（3行目：設定値）
+        yaxis_row2 = ttk.Frame(yaxis_frame)
+        yaxis_row2.pack(fill=tk.X, pady=3)
+        ttk.Label(yaxis_row2, text="", width=12).pack(side=tk.LEFT)
+        ttk.Radiobutton(yaxis_row2, text="設定値", variable=self.temp_yaxis_select_var,
+                        value="manual").pack(side=tk.LEFT)
+        ttk.Label(yaxis_row2, text="Min:").pack(side=tk.LEFT, padx=(10, 2))
+        ttk.Entry(yaxis_row2, textvariable=self.yaxis_min_var, width=7).pack(side=tk.LEFT)
+        ttk.Label(yaxis_row2, text="Max:").pack(side=tk.LEFT, padx=(10, 2))
+        ttk.Entry(yaxis_row2, textvariable=self.yaxis_max_var, width=7).pack(side=tk.LEFT)
+
+        # 縦軸LSB/Div
+        div_frame = ttk.Frame(yaxis_frame)
+        div_frame.pack(fill=tk.X, pady=3)
+        ttk.Label(div_frame, text="縦軸LSB/Div:", width=12).pack(side=tk.LEFT)
+        ttk.Entry(div_frame, textvariable=self.lsb_per_div_var, width=10).pack(side=tk.LEFT, padx=5)
+
+        # 縦軸更新ボタン（Y軸設定内）
+        ttk.Button(yaxis_frame, text="縦軸更新",
+                   command=self._apply_yaxis_to_temp_graph).pack(anchor=tk.E, pady=(8, 0))
+
+        # PNG保存エリア
+        save_frame = ttk.LabelFrame(main_frame, text="グラフ保存", padding=10)
+        save_frame.pack(fill=tk.X, pady=(0, 10))
+
+        ttk.Button(save_frame, text="グラフをPNG保存",
+                   command=self._save_temp_graphs).pack(anchor=tk.W)
+
+        # 閉じるボタン
+        btn_frame = ttk.Frame(main_frame)
+        btn_frame.pack(fill=tk.X, pady=10)
+        ttk.Button(btn_frame, text="閉じる",
+                   command=self.temp_settings_window.destroy).pack(side=tk.RIGHT, padx=5)
+
+        # 初回描画（デフォルト値で）
+        self._draw_temp_graph_and_update_calc()
+
+    def _apply_yaxis_to_temp_graph(self):
+        """縦軸更新ボタン: 共通設定の値でグラフを再描画（位置保持）"""
+        import matplotlib.pyplot as plt
+
+        # 既存のグラフウィンドウの位置を保存
+        graph_positions = []
+        for fig_num in plt.get_fignums():
+            try:
+                fig = plt.figure(fig_num)
+                manager = fig.canvas.manager
+                x = manager.window.winfo_x()
+                y = manager.window.winfo_y()
+                graph_positions.append((x, y))
+            except:
+                pass
+
+        plt.close('all')
+        self._draw_temp_graph_and_update_calc()
+
+        # 新しいグラフウィンドウを保存した位置に移動
+        if graph_positions:
+            for i, fig_num in enumerate(plt.get_fignums()):
+                if i < len(graph_positions):
+                    try:
+                        fig = plt.figure(fig_num)
+                        manager = fig.canvas.manager
+                        x, y = graph_positions[i]
+                        manager.window.geometry(f"+{x}+{y}")
+                    except:
+                        pass
+
+    def _draw_temp_graph_and_update_calc(self):
+        """温特グラフを描画し、計算結果を更新"""
         try:
             bit_precision = int(self.bit_precision_var.get())
             pos_full = float(self.pos_full_var.get())
             neg_full = float(self.neg_full_var.get())
             ref_mode = "first_avg"  # 温特グラフは初回平均固定
 
-            # Y軸設定: デフォルト or 共通設定
-            if self.temp_yaxis_mode_var.get() == "default":
-                # デフォルト: ±8LSB 2LSB/Div
+            # Y軸設定を選択に基づいて決定
+            yaxis_select = self.temp_yaxis_select_var.get()
+            if yaxis_select == "default":
+                # デフォルト: ±8LSB, 2LSB/Div
                 lsb_per_div = 2
-                temp_yaxis_mode = "manual"
-                temp_yaxis_min = -8.0
-                temp_yaxis_max = 8.0
-            else:
-                # 共通設定を使用
+                yaxis_mode = "manual"
+                yaxis_min = -8.0
+                yaxis_max = 8.0
+            elif yaxis_select == "auto":
+                # オート
                 lsb_per_div = float(self.lsb_per_div_var.get())
-                temp_yaxis_mode = self.yaxis_mode_var.get()
-                if temp_yaxis_mode == "manual":
-                    temp_yaxis_min = float(self.yaxis_min_var.get())
-                    temp_yaxis_max = float(self.yaxis_max_var.get())
-                else:
-                    # オートの場合はNone
-                    temp_yaxis_min = None
-                    temp_yaxis_max = None
+                yaxis_mode = "auto"
+                yaxis_min = None
+                yaxis_max = None
+            else:
+                # 設定値
+                lsb_per_div = float(self.lsb_per_div_var.get())
+                yaxis_mode = "manual"
+                yaxis_min = float(self.yaxis_min_var.get())
+                yaxis_max = float(self.yaxis_max_var.get())
 
             skip_after_change = int(self.skip_after_change_var.get())
             skip_first_data = self.skip_first_data_var.get()
@@ -567,22 +689,151 @@ class GraphTab(ttk.Frame):
             messagebox.showerror("エラー", "設定値が不正です")
             return
 
-        # LSBGraphPlotterを作成（温特グラフ用設定）
+        # LSBGraphPlotterを作成
         plotter = LSBGraphPlotter(bit_precision, pos_full, neg_full, lsb_per_div, ref_mode,
-                                  temp_yaxis_mode, temp_yaxis_min, temp_yaxis_max,
+                                  yaxis_mode, yaxis_min, yaxis_max,
                                   skip_after_change, skip_first_data, skip_before_change)
 
-        # 選択されたデータをプロット
-        plot_count = 0
-        for key, var in self.checkboxes.items():
-            if var.get():
-                serial, pole = key.rsplit('_', 1)
-                result = plotter.plot_temperature_characteristic(
-                    self.csv_data, self.temp_csv_data, serial, pole,
-                    temp_yaxis_mode, temp_yaxis_min, temp_yaxis_max
-                )
-                if result:
-                    plot_count += 1
+        # 選択されたデータをプロット（POS/NEG別に計算結果とfigureを保存）
+        self.temp_graph_pos_info = None
+        self.temp_graph_neg_info = None
+        self.temp_graph_pos_serial = None
+        self.temp_graph_neg_serial = None
 
-        if plot_count == 0:
-            messagebox.showwarning("警告", "表示するデータを選択してください")
+        for key in self.temp_graph_selected_keys:
+            serial, pole = key.rsplit('_', 1)
+            calc_info = plotter.plot_temperature_characteristic(
+                self.csv_data, self.temp_csv_data, serial, pole,
+                yaxis_mode, yaxis_min, yaxis_max
+            )
+            if calc_info:
+                if pole == "POS":
+                    self.temp_graph_pos_info = calc_info
+                    self.temp_graph_pos_serial = serial
+                elif pole == "NEG":
+                    self.temp_graph_neg_info = calc_info
+                    self.temp_graph_neg_serial = serial
+
+        pos_calc_info = self.temp_graph_pos_info
+        neg_calc_info = self.temp_graph_neg_info
+
+        # エラーチェック：必要なデータ（FFFFF/00000）があるか確認
+        missing_data = []
+        for calc_info, pole_name in [(pos_calc_info, "POS"), (neg_calc_info, "NEG")]:
+            if calc_info:
+                if not calc_info.get('has_fffff'):
+                    missing_data.append(f"{pole_name}: +Full(FFFFF)データなし")
+                if not calc_info.get('has_zero'):
+                    missing_data.append(f"{pole_name}: -Full(00000)データなし")
+
+        if missing_data:
+            messagebox.showwarning("警告",
+                "LSB電圧計算に必要なデータが不足しています:\n" + "\n".join(missing_data))
+
+        # 計算結果を更新（POS/NEG別）
+        self._update_calc_labels(pos_calc_info, neg_calc_info)
+
+    def _update_calc_labels(self, pos_calc_info, neg_calc_info):
+        """計算結果ラベルを更新（POS/NEG別、表示は小数第5位まで）"""
+        # POS計算結果
+        if pos_calc_info:
+            fffff_avg = pos_calc_info.get('fffff_avg')
+            zero_avg = pos_calc_info.get('00000_avg')
+            lsb_voltage = pos_calc_info.get('lsb_voltage')
+
+            if fffff_avg is not None:
+                self.calc_pos_fffff_label.config(text=f"  +Full平均: {fffff_avg:.5f} V")
+            else:
+                self.calc_pos_fffff_label.config(text="  +Full平均: データなし")
+
+            if zero_avg is not None:
+                self.calc_pos_zero_label.config(text=f"  -Full平均: {zero_avg:.5f} V")
+            else:
+                self.calc_pos_zero_label.config(text="  -Full平均: データなし")
+
+            if lsb_voltage is not None:
+                lsb_mv = lsb_voltage * 1000  # V → mV
+                self.calc_pos_lsb_label.config(text=f"  LSB電圧: {lsb_mv:.5f} mV")
+            else:
+                self.calc_pos_lsb_label.config(text="  LSB電圧: 計算不可")
+        else:
+            self.calc_pos_fffff_label.config(text="  +Full平均: ---")
+            self.calc_pos_zero_label.config(text="  -Full平均: ---")
+            self.calc_pos_lsb_label.config(text="  LSB電圧: ---")
+
+        # NEG計算結果
+        if neg_calc_info:
+            fffff_avg = neg_calc_info.get('fffff_avg')
+            zero_avg = neg_calc_info.get('00000_avg')
+            lsb_voltage = neg_calc_info.get('lsb_voltage')
+
+            if fffff_avg is not None:
+                self.calc_neg_fffff_label.config(text=f"  +Full平均: {fffff_avg:.5f} V")
+            else:
+                self.calc_neg_fffff_label.config(text="  +Full平均: データなし")
+
+            if zero_avg is not None:
+                self.calc_neg_zero_label.config(text=f"  -Full平均: {zero_avg:.5f} V")
+            else:
+                self.calc_neg_zero_label.config(text="  -Full平均: データなし")
+
+            if lsb_voltage is not None:
+                lsb_mv = lsb_voltage * 1000  # V → mV
+                self.calc_neg_lsb_label.config(text=f"  LSB電圧: {lsb_mv:.5f} mV")
+            else:
+                self.calc_neg_lsb_label.config(text="  LSB電圧: 計算不可")
+        else:
+            self.calc_neg_fffff_label.config(text="  +Full平均: ---")
+            self.calc_neg_zero_label.config(text="  -Full平均: ---")
+            self.calc_neg_lsb_label.config(text="  LSB電圧: ---")
+
+    def _redraw_temp_graph(self):
+        """温特グラフを再描画"""
+        import matplotlib.pyplot as plt
+        # 既存のグラフを閉じる
+        plt.close('all')
+        # 再描画
+        self._draw_temp_graph_and_update_calc()
+
+    def _save_temp_graphs(self):
+        """温特グラフをPNG保存（POS/NEG両方）"""
+        import os
+
+        # 保存するグラフがあるか確認
+        graphs_to_save = []
+        if self.temp_graph_pos_info and self.temp_graph_pos_info.get('figure'):
+            graphs_to_save.append(("POS", self.temp_graph_pos_info['figure'], self.temp_graph_pos_serial))
+        if self.temp_graph_neg_info and self.temp_graph_neg_info.get('figure'):
+            graphs_to_save.append(("NEG", self.temp_graph_neg_info['figure'], self.temp_graph_neg_serial))
+
+        if not graphs_to_save:
+            messagebox.showerror("エラー", "保存するグラフがありません")
+            return
+
+        # フォルダ選択ダイアログ
+        folder_path = filedialog.askdirectory(title="保存先フォルダを選択")
+        if not folder_path:
+            return
+
+        # 保存実行
+        saved_files = []
+        errors = []
+        for pole, fig, serial in graphs_to_save:
+            filename = f"温特グラフ_{serial}_{pole}.png"
+            filepath = os.path.join(folder_path, filename)
+            try:
+                fig.savefig(filepath, dpi=150, bbox_inches='tight')
+                saved_files.append(filename)
+            except Exception as e:
+                errors.append(f"{filename}: {str(e)}")
+
+        # 結果表示
+        if saved_files:
+            msg = "保存しました:\n" + "\n".join(saved_files)
+            if errors:
+                msg += "\n\nエラー:\n" + "\n".join(errors)
+                messagebox.showwarning("一部保存完了", msg)
+            else:
+                messagebox.showinfo("成功", msg)
+        else:
+            messagebox.showerror("エラー", "保存に失敗しました:\n" + "\n".join(errors))

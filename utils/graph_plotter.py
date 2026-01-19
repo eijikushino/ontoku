@@ -815,6 +815,141 @@ class LSBGraphPlotter:
             parent, serial, pole, elapsed_times, lsb_values, codes, datasets
         )
 
+    def extract_data_for_temp_characteristic(self, csv_data, serial, pole, column_name):
+        """
+        温特グラフ用データ抽出（実測値からLSB電圧を計算）
+
+        最初に登場するFFFFF（+Full）と00000（-Full）の平均電圧からLSB電圧を計算する。
+
+        Args:
+            csv_data: CSVデータのリスト
+            serial: シリアルNo.
+            pole: "POS" or "NEG"
+            column_name: 列名
+
+        Returns:
+            (elapsed_times, lsb_values, codes, datasets, calc_info): タプル
+                calc_info: 計算情報の辞書 {
+                    'fffff_avg': +Full平均電圧,
+                    '00000_avg': -Full平均電圧,
+                    'lsb_voltage': 計算されたLSB電圧
+                }
+        """
+        elapsed_times = []
+        voltages = []
+        codes = []
+        datasets = []
+        base_timestamp = None
+
+        # 第1パス: 生データを収集
+        for row in csv_data:
+            if column_name in row and row[column_name]:
+                try:
+                    timestamp_str = row.get('Timestamp', '')
+                    if not timestamp_str:
+                        continue
+
+                    timestamp = self.parse_timestamp(timestamp_str)
+                    if base_timestamp is None:
+                        base_timestamp = timestamp
+
+                    elapsed_min = self.calculate_elapsed_time(timestamp, base_timestamp)
+                    code_str = row.get('Code', '')
+                    dataset = row.get('DataSet', '')
+                    voltage = float(row[column_name])
+
+                    elapsed_times.append(elapsed_min)
+                    voltages.append(voltage)
+                    codes.append(code_str)
+                    datasets.append(dataset)
+
+                except (ValueError, KeyError):
+                    continue
+
+        # スキップ処理
+        if (self.skip_after_change > 0 or self.skip_first_data or self.skip_before_change) and len(codes) > 0:
+            skip_indices = self._get_skip_indices(codes, datasets)
+            elapsed_times = [elapsed_times[i] for i in range(len(elapsed_times)) if i not in skip_indices]
+            voltages = [voltages[i] for i in range(len(voltages)) if i not in skip_indices]
+            codes = [codes[i] for i in range(len(codes)) if i not in skip_indices]
+            datasets = [datasets[i] for i in range(len(datasets)) if i not in skip_indices]
+
+        # FFFFFと00000の最初の区間の平均電圧を計算
+        # コード形式: "FFFFF", "+Full (FFFFF)", etc.
+        fffff_voltages = []
+        zero_voltages = []
+        fffff_first_section_found = False
+        zero_first_section_found = False
+        prev_is_fffff = False
+        prev_is_zero = False
+
+        for i, code_str in enumerate(codes):
+            code_upper = code_str.upper().strip()
+            # FFFFFを含むかチェック（"FFFFF" or "+FULL (FFFFF)" etc.）
+            is_fffff = 'FFFFF' in code_upper
+            # 00000を含むかチェック（"00000" or "-FULL (00000)" etc.）
+            is_zero = '00000' in code_upper
+
+            # FFFFFの最初の区間
+            if is_fffff:
+                if not fffff_first_section_found:
+                    if not prev_is_fffff:
+                        # 新しい区間開始
+                        if fffff_voltages:
+                            # 既に収集済みなら最初の区間終了
+                            fffff_first_section_found = True
+                        else:
+                            fffff_voltages.append(voltages[i])
+                    else:
+                        fffff_voltages.append(voltages[i])
+
+            # 00000の最初の区間
+            elif is_zero:
+                if not zero_first_section_found:
+                    if not prev_is_zero:
+                        if zero_voltages:
+                            zero_first_section_found = True
+                        else:
+                            zero_voltages.append(voltages[i])
+                    else:
+                        zero_voltages.append(voltages[i])
+
+            prev_is_fffff = is_fffff
+            prev_is_zero = is_zero
+
+        # 平均電圧を計算
+        fffff_avg = sum(fffff_voltages) / len(fffff_voltages) if fffff_voltages else None
+        zero_avg = sum(zero_voltages) / len(zero_voltages) if zero_voltages else None
+
+        # LSB電圧を計算
+        if fffff_avg is not None and zero_avg is not None:
+            measured_lsb_voltage = abs(fffff_avg - zero_avg) / (2 ** self.bit_precision - 1)
+        else:
+            # 計算できない場合は理論値を使用
+            measured_lsb_voltage = self.lsb_voltage
+
+        calc_info = {
+            'fffff_avg': fffff_avg,
+            '00000_avg': zero_avg,
+            'lsb_voltage': measured_lsb_voltage,
+            'has_fffff': len(fffff_voltages) > 0,
+            'has_zero': len(zero_voltages) > 0
+        }
+
+        # 第2パス: LSB値に変換（初回平均モードで計算）
+        # 基準電圧は各コードの最初の区間の平均を使用
+        ref_voltages = self._calculate_first_section_average(voltages, codes, datasets)
+
+        lsb_values = []
+        for i in range(len(voltages)):
+            voltage = voltages[i]
+            ref_voltage = ref_voltages[i]
+            # 実測LSB電圧を使用
+            lsb_value = (voltage - ref_voltage) / measured_lsb_voltage
+            lsb_values.append(lsb_value)
+
+        return elapsed_times, lsb_values, codes, datasets, calc_info
+
     def plot_temperature_characteristic(self, csv_data, temp_csv_data, serial, pole,
                                          temp_yaxis_mode="manual", temp_yaxis_min=-8, temp_yaxis_max=8):
         """
@@ -834,8 +969,8 @@ class LSBGraphPlotter:
         """
         column_name = f"{serial}_{pole}"
 
-        # 測定データからLSBデータを抽出
-        elapsed_times, lsb_values, codes, datasets = self.extract_data_from_csv(
+        # 測定データからLSBデータを抽出（温特グラフ用：実測LSB電圧を使用）
+        elapsed_times, lsb_values, codes, datasets, calc_info = self.extract_data_for_temp_characteristic(
             csv_data, serial, pole, column_name
         )
 
@@ -895,7 +1030,9 @@ class LSBGraphPlotter:
         fig.tight_layout()
         plt.show(block=False)
 
-        return True
+        # 計算情報とfigureを返す（設定画面で表示・保存用）
+        calc_info['figure'] = fig
+        return calc_info
 
     def _extract_temperature_data(self, temp_csv_data, measurement_csv_data):
         """
