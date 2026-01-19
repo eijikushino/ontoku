@@ -46,15 +46,12 @@ class GraphTab(ttk.Frame):
         """ウィジェットを作成"""
         # ファイル選択フレーム
         self._create_file_selection_frame()
-        
-        # 設定フレーム
+
+        # 設定フレーム（グラフ表示ボタン含む）
         self._create_settings_frame()
-        
+
         # データ選択フレーム
         self._create_data_selection_frame()
-        
-        # グラフ表示ボタン
-        self._create_plot_button()
     
     def _create_file_selection_frame(self):
         """ファイル選択フレームを作成"""
@@ -83,73 +80,84 @@ class GraphTab(ttk.Frame):
     
     def _create_settings_frame(self):
         """設定フレームを作成"""
-        settings_frame = ttk.LabelFrame(self, text="変換設定", padding=10)
-        settings_frame.pack(fill=tk.X, padx=10, pady=5)
-        
+        # 設定フレームを横並びにするためのコンテナ（均等幅）
+        settings_container = ttk.Frame(self)
+        settings_container.pack(fill=tk.X, padx=10, pady=5)
+        settings_container.columnconfigure(0, weight=1)
+        settings_container.columnconfigure(1, weight=1)
+
+        # 左側: 変換設定
+        settings_frame = ttk.LabelFrame(settings_container, text="変換設定", padding=10)
+        settings_frame.grid(row=0, column=0, sticky="nsew", padx=(0, 5))
+
         # Bit精度設定
         bit_frame = ttk.Frame(settings_frame)
         bit_frame.pack(fill=tk.X, pady=2)
         ttk.Label(bit_frame, text="Bit精度:").pack(side=tk.LEFT, padx=5)
         self.bit_precision_var = tk.StringVar(value="24")
-        ttk.Entry(bit_frame, textvariable=self.bit_precision_var, 
+        ttk.Entry(bit_frame, textvariable=self.bit_precision_var,
                   width=10).pack(side=tk.LEFT, padx=5)
         ttk.Label(bit_frame, text="bit").pack(side=tk.LEFT)
-        
-        # 基準電圧設定
+
+        # 基準電圧設定（幅を2/3に）
         ref_frame = ttk.Frame(settings_frame)
         ref_frame.pack(fill=tk.X, pady=2)
         ttk.Label(ref_frame, text="+Full基準電圧:").pack(side=tk.LEFT, padx=5)
         self.pos_full_var = tk.StringVar(value="10.0")
-        ttk.Entry(ref_frame, textvariable=self.pos_full_var, 
-                  width=10).pack(side=tk.LEFT, padx=5)
-        ttk.Label(ref_frame, text="V").pack(side=tk.LEFT, padx=(0, 20))
-        
+        ttk.Entry(ref_frame, textvariable=self.pos_full_var,
+                  width=7).pack(side=tk.LEFT, padx=5)
+        ttk.Label(ref_frame, text="V").pack(side=tk.LEFT, padx=(0, 10))
+
         ttk.Label(ref_frame, text="-Full基準電圧:").pack(side=tk.LEFT, padx=5)
         self.neg_full_var = tk.StringVar(value="-10.0")
-        ttk.Entry(ref_frame, textvariable=self.neg_full_var, 
-                  width=10).pack(side=tk.LEFT, padx=5)
+        ttk.Entry(ref_frame, textvariable=self.neg_full_var,
+                  width=7).pack(side=tk.LEFT, padx=5)
         ttk.Label(ref_frame, text="V").pack(side=tk.LEFT)
-        
-        # LSB/div設定
+
+        # Y軸範囲設定（2行に分割）
+        yaxis_frame1 = ttk.Frame(settings_frame)
+        yaxis_frame1.pack(fill=tk.X, pady=2)
+        ttk.Label(yaxis_frame1, text="Y軸範囲:", width=10).pack(side=tk.LEFT, padx=5)
+        self.yaxis_mode_var = tk.StringVar(value="auto")
+        ttk.Radiobutton(yaxis_frame1, text="オート", variable=self.yaxis_mode_var,
+                        value="auto").pack(side=tk.LEFT)
+
+        yaxis_frame2 = ttk.Frame(settings_frame)
+        yaxis_frame2.pack(fill=tk.X, pady=2)
+        ttk.Label(yaxis_frame2, text="", width=10).pack(side=tk.LEFT, padx=5)  # インデント用
+        ttk.Radiobutton(yaxis_frame2, text="設定値", variable=self.yaxis_mode_var,
+                        value="manual").pack(side=tk.LEFT)
+        ttk.Label(yaxis_frame2, text="Min:").pack(side=tk.LEFT, padx=(10, 2))
+        self.yaxis_min_var = tk.StringVar(value="-50")
+        ttk.Entry(yaxis_frame2, textvariable=self.yaxis_min_var,
+                  width=8).pack(side=tk.LEFT, padx=2)
+        ttk.Label(yaxis_frame2, text="Max:").pack(side=tk.LEFT, padx=(10, 2))
+        self.yaxis_max_var = tk.StringVar(value="50")
+        ttk.Entry(yaxis_frame2, textvariable=self.yaxis_max_var,
+                  width=8).pack(side=tk.LEFT, padx=2)
+        ttk.Label(yaxis_frame2, text="LSB").pack(side=tk.LEFT)
+
+        # LSB/Div設定 - 順序変更
         lsb_frame = ttk.Frame(settings_frame)
         lsb_frame.pack(fill=tk.X, pady=2)
-        ttk.Label(lsb_frame, text="縦軸LSB/div:").pack(side=tk.LEFT, padx=5)
+        ttk.Label(lsb_frame, text="縦軸LSB/Div:").pack(side=tk.LEFT, padx=5)
         self.lsb_per_div_var = tk.StringVar(value="10")
         ttk.Entry(lsb_frame, textvariable=self.lsb_per_div_var,
                   width=10).pack(side=tk.LEFT, padx=5)
         ttk.Label(lsb_frame, text="LSB").pack(side=tk.LEFT)
 
-        # Y軸範囲設定（オート/設定値）
-        yaxis_frame = ttk.Frame(settings_frame)
-        yaxis_frame.pack(fill=tk.X, pady=2)
-        ttk.Label(yaxis_frame, text="Y軸範囲:").pack(side=tk.LEFT, padx=5)
-        self.yaxis_mode_var = tk.StringVar(value="auto")
-        ttk.Radiobutton(yaxis_frame, text="オート", variable=self.yaxis_mode_var,
-                        value="auto").pack(side=tk.LEFT, padx=5)
-        ttk.Radiobutton(yaxis_frame, text="設定値", variable=self.yaxis_mode_var,
-                        value="manual").pack(side=tk.LEFT, padx=5)
-        ttk.Label(yaxis_frame, text="Min:").pack(side=tk.LEFT, padx=(20, 5))
-        self.yaxis_min_var = tk.StringVar(value="-50")
-        ttk.Entry(yaxis_frame, textvariable=self.yaxis_min_var,
-                  width=8).pack(side=tk.LEFT, padx=2)
-        ttk.Label(yaxis_frame, text="Max:").pack(side=tk.LEFT, padx=(10, 5))
-        self.yaxis_max_var = tk.StringVar(value="50")
-        ttk.Entry(yaxis_frame, textvariable=self.yaxis_max_var,
-                  width=8).pack(side=tk.LEFT, padx=2)
-        ttk.Label(yaxis_frame, text="LSB").pack(side=tk.LEFT)
-
         # 基準電圧計算方法
-        ref_frame = ttk.Frame(settings_frame)
-        ref_frame.pack(fill=tk.X, pady=2)
-        ttk.Label(ref_frame, text="基準電圧:").pack(side=tk.LEFT, padx=5)
+        ref_mode_frame = ttk.Frame(settings_frame)
+        ref_mode_frame.pack(fill=tk.X, pady=2)
+        ttk.Label(ref_mode_frame, text="基準電圧:").pack(side=tk.LEFT, padx=5)
         self.ref_mode_var = tk.StringVar(value="ideal")
-        ttk.Radiobutton(ref_frame, text="理想値", variable=self.ref_mode_var,
+        ttk.Radiobutton(ref_mode_frame, text="理想値", variable=self.ref_mode_var,
                         value="ideal").pack(side=tk.LEFT, padx=5)
-        ttk.Radiobutton(ref_frame, text="全平均", variable=self.ref_mode_var,
+        ttk.Radiobutton(ref_mode_frame, text="全平均", variable=self.ref_mode_var,
                         value="all_avg").pack(side=tk.LEFT, padx=5)
-        ttk.Radiobutton(ref_frame, text="区間別平均", variable=self.ref_mode_var,
+        ttk.Radiobutton(ref_mode_frame, text="区間別平均", variable=self.ref_mode_var,
                         value="section_avg").pack(side=tk.LEFT, padx=5)
-        ttk.Radiobutton(ref_frame, text="初回平均", variable=self.ref_mode_var,
+        ttk.Radiobutton(ref_mode_frame, text="初回平均", variable=self.ref_mode_var,
                         value="first_avg").pack(side=tk.LEFT, padx=5)
 
         # スキップ設定フレーム
@@ -172,14 +180,63 @@ class GraphTab(ttk.Frame):
         self.skip_before_change_var = tk.BooleanVar(value=False)
         ttk.Checkbutton(skip_frame, text="切替前スキップ",
                         variable=self.skip_before_change_var).pack(side=tk.LEFT, padx=5)
+
+        # グラフ表示ボタン（変換設定内）
+        ttk.Separator(settings_frame, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=5)
+        ttk.Button(settings_frame, text="選択したデータをグラフ表示",
+                   command=self.plot_selected_data).pack(pady=5)
+
+        # 右側: 温特グラフ設定
+        temp_settings_frame = ttk.LabelFrame(settings_container, text="温特グラフ設定", padding=15)
+        temp_settings_frame.grid(row=0, column=1, sticky="nsew", padx=(5, 0))
+
+        # 温特グラフで使用する設定（共通設定を参照）
+        ttk.Label(temp_settings_frame, text="【共通設定を使用】",
+                  font=('', 9, 'bold')).pack(anchor=tk.W, pady=(0, 8))
+        ttk.Label(temp_settings_frame, text="・Bit精度").pack(anchor=tk.W, padx=15, pady=1)
+        ttk.Label(temp_settings_frame, text="・基準電圧 (+Full/-Full)").pack(anchor=tk.W, padx=15, pady=1)
+        ttk.Label(temp_settings_frame, text="・スキップ設定").pack(anchor=tk.W, padx=15, pady=1)
+
+        # Y軸(LSB)設定
+        ttk.Separator(temp_settings_frame, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=12)
+        ttk.Label(temp_settings_frame, text="【Y軸(LSB)設定】",
+                  font=('', 9, 'bold')).pack(anchor=tk.W, pady=(0, 8))
+
+        # 選択式: デフォルト or 共通設定
+        self.temp_yaxis_mode_var = tk.StringVar(value="default")
+        temp_yaxis_radio_frame = ttk.Frame(temp_settings_frame)
+        temp_yaxis_radio_frame.pack(fill=tk.X, pady=3)
+        ttk.Radiobutton(temp_yaxis_radio_frame, text="デフォルト(±8LSB 2LSB/Div)",
+                        variable=self.temp_yaxis_mode_var,
+                        value="default").pack(side=tk.LEFT, padx=10)
+        ttk.Radiobutton(temp_yaxis_radio_frame, text="共通設定を使用",
+                        variable=self.temp_yaxis_mode_var,
+                        value="common").pack(side=tk.LEFT, padx=10)
+
+        # デフォルト値は保持（内部で使用）
+        self.temp_yaxis_min_var = tk.StringVar(value="-8")
+        self.temp_yaxis_max_var = tk.StringVar(value="8")
+
+        # 固定値の注記
+        ttk.Separator(temp_settings_frame, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=12)
+        ttk.Label(temp_settings_frame, text="【固定値】",
+                  font=('', 9, 'bold')).pack(anchor=tk.W, pady=(0, 8))
+        ttk.Label(temp_settings_frame, text="・基準電圧モード: 初回平均").pack(anchor=tk.W, padx=15, pady=1)
+        ttk.Label(temp_settings_frame, text="・Y軸(温度): ±8℃, 2℃/Div").pack(anchor=tk.W, padx=15, pady=1)
+        ttk.Label(temp_settings_frame, text="・X軸: 10分/Div").pack(anchor=tk.W, padx=15, pady=1)
+
+        # 温特グラフ表示ボタン（温特グラフ設定内）
+        ttk.Separator(temp_settings_frame, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=8)
+        ttk.Button(temp_settings_frame, text="温特グラフ表示",
+                   command=self.plot_temperature_graph).pack(pady=8)
     
     def _create_data_selection_frame(self):
         """データ選択フレームを作成"""
         selection_frame = ttk.LabelFrame(self, text="表示データ選択", padding=10)
         selection_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
-        
+
         # スクロール可能なフレーム
-        canvas = tk.Canvas(selection_frame, height=200)
+        canvas = tk.Canvas(selection_frame, height=100)
         scrollbar = ttk.Scrollbar(selection_frame, orient="vertical", command=canvas.yview)
         self.scrollable_frame = ttk.Frame(canvas)
         
@@ -193,16 +250,6 @@ class GraphTab(ttk.Frame):
         
         canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-    
-    def _create_plot_button(self):
-        """グラフ表示ボタンを作成"""
-        button_frame = ttk.Frame(self)
-        button_frame.pack(fill=tk.X, padx=10, pady=5)
-
-        ttk.Button(button_frame, text="選択したデータをグラフ表示",
-                   command=self.plot_selected_data).pack(side=tk.LEFT, padx=5, pady=5)
-        ttk.Button(button_frame, text="温特グラフ表示",
-                   command=self.plot_temperature_graph).pack(side=tk.LEFT, padx=5, pady=5)
     
     def _setup_auto_save(self):
         """設定値の自動保存を設定"""
@@ -218,6 +265,8 @@ class GraphTab(ttk.Frame):
         self.skip_after_change_var.trace_add('write', self._on_setting_changed)
         self.skip_first_data_var.trace_add('write', self._on_setting_changed)
         self.skip_before_change_var.trace_add('write', self._on_setting_changed)
+        # 温特グラフ用Y軸設定
+        self.temp_yaxis_mode_var.trace_add('write', self._on_setting_changed)
     
     def _on_setting_changed(self, *args):
         """設定値が変更されたときに自動保存＆グラフ更新"""
@@ -243,6 +292,8 @@ class GraphTab(ttk.Frame):
                 self.skip_after_change_var.set(settings.get('skip_after_change', '0'))
                 self.skip_first_data_var.set(settings.get('skip_first_data', False))
                 self.skip_before_change_var.set(settings.get('skip_before_change', False))
+                # 温特グラフ用Y軸設定（起動時は常にデフォルト）
+                # self.temp_yaxis_mode_var は初期値 "default" のまま
 
                 # CSVファイルパスを復元
                 csv_path = settings.get('csv_file_path', '')
@@ -274,6 +325,7 @@ class GraphTab(ttk.Frame):
                 'skip_after_change': self.skip_after_change_var.get(),
                 'skip_first_data': self.skip_first_data_var.get(),
                 'skip_before_change': self.skip_before_change_var.get(),
+                'temp_yaxis_mode': self.temp_yaxis_mode_var.get(),
                 'csv_file_path': self.file_path_var.get(),
                 'temp_csv_file_path': self.temp_file_path_var.get()
             }
@@ -482,16 +534,32 @@ class GraphTab(ttk.Frame):
             messagebox.showerror("エラー", "温度CSVファイルを読み込んでください")
             return
 
-        # 設定値を取得
+        # 設定値を取得（温特グラフ用）
         try:
             bit_precision = int(self.bit_precision_var.get())
             pos_full = float(self.pos_full_var.get())
             neg_full = float(self.neg_full_var.get())
-            lsb_per_div = float(self.lsb_per_div_var.get())
-            ref_mode = self.ref_mode_var.get()
-            yaxis_mode = self.yaxis_mode_var.get()
-            yaxis_min = float(self.yaxis_min_var.get()) if yaxis_mode == "manual" else None
-            yaxis_max = float(self.yaxis_max_var.get()) if yaxis_mode == "manual" else None
+            ref_mode = "first_avg"  # 温特グラフは初回平均固定
+
+            # Y軸設定: デフォルト or 共通設定
+            if self.temp_yaxis_mode_var.get() == "default":
+                # デフォルト: ±8LSB 2LSB/Div
+                lsb_per_div = 2
+                temp_yaxis_mode = "manual"
+                temp_yaxis_min = -8.0
+                temp_yaxis_max = 8.0
+            else:
+                # 共通設定を使用
+                lsb_per_div = float(self.lsb_per_div_var.get())
+                temp_yaxis_mode = self.yaxis_mode_var.get()
+                if temp_yaxis_mode == "manual":
+                    temp_yaxis_min = float(self.yaxis_min_var.get())
+                    temp_yaxis_max = float(self.yaxis_max_var.get())
+                else:
+                    # オートの場合はNone
+                    temp_yaxis_min = None
+                    temp_yaxis_max = None
+
             skip_after_change = int(self.skip_after_change_var.get())
             skip_first_data = self.skip_first_data_var.get()
             skip_before_change = self.skip_before_change_var.get()
@@ -499,9 +567,9 @@ class GraphTab(ttk.Frame):
             messagebox.showerror("エラー", "設定値が不正です")
             return
 
-        # LSBGraphPlotterを作成
+        # LSBGraphPlotterを作成（温特グラフ用設定）
         plotter = LSBGraphPlotter(bit_precision, pos_full, neg_full, lsb_per_div, ref_mode,
-                                  yaxis_mode, yaxis_min, yaxis_max,
+                                  temp_yaxis_mode, temp_yaxis_min, temp_yaxis_max,
                                   skip_after_change, skip_first_data, skip_before_change)
 
         # 選択されたデータをプロット
@@ -510,7 +578,8 @@ class GraphTab(ttk.Frame):
             if var.get():
                 serial, pole = key.rsplit('_', 1)
                 result = plotter.plot_temperature_characteristic(
-                    self.csv_data, self.temp_csv_data, serial, pole
+                    self.csv_data, self.temp_csv_data, serial, pole,
+                    temp_yaxis_mode, temp_yaxis_min, temp_yaxis_max
                 )
                 if result:
                     plot_count += 1

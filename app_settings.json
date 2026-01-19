@@ -5,7 +5,7 @@
     },
     "test": {
         "save_folder": "C:/Users/e-kus/Desktop/AI/ClaudeCode/温特アプリ/温特/pattern",
-        "filename": "pattern",
+        "filename": "温特パターン",
         "def_checks": [
             true,
             false,
@@ -29,7 +29,8 @@
             "CH00",
             "ー",
             "ー"
-        ]
+        ],
+        "send_opposite_center": true
     },
     "save_config": {
         "save_dir": "C:/Users/e-kus/Desktop/AI/ClaudeCode/温特アプリ/csv"
@@ -45,7 +46,7 @@
                 "DEF5_sn": "DFH456"
             },
             "save_config": {
-                "file_name": "posneg切り替え9.csv"
+                "file_name": "温特計算用.csv"
             },
             "device_type": "main"
         }

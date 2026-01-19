@@ -815,7 +815,8 @@ class LSBGraphPlotter:
             parent, serial, pole, elapsed_times, lsb_values, codes, datasets
         )
 
-    def plot_temperature_characteristic(self, csv_data, temp_csv_data, serial, pole):
+    def plot_temperature_characteristic(self, csv_data, temp_csv_data, serial, pole,
+                                         temp_yaxis_mode="manual", temp_yaxis_min=-8, temp_yaxis_max=8):
         """
         温特グラフを表示（2軸: LSB変動 + 温度差）
 
@@ -824,6 +825,9 @@ class LSBGraphPlotter:
             temp_csv_data: 温度CSVデータ
             serial: シリアルNo.
             pole: "POS" or "NEG"
+            temp_yaxis_mode: Y軸モード ("auto" or "manual")
+            temp_yaxis_min: Y軸(LSB)最小値（デフォルト: -8）
+            temp_yaxis_max: Y軸(LSB)最大値（デフォルト: 8）
 
         Returns:
             True: 成功, None: 失敗
@@ -844,8 +848,8 @@ class LSBGraphPlotter:
         if not temp_times:
             return None
 
-        # 2軸グラフを作成
-        fig, ax1 = plt.subplots(figsize=(12, 6))
+        # 2軸グラフを作成（縦:横 = 4.5:5.5）
+        fig, ax1 = plt.subplots(figsize=(7.33, 6))
 
         # 左軸: LSB変動（コードごとに色分け、温特グラフ用凡例）
         self._plot_by_code_with_lines(ax1, elapsed_times, lsb_values, codes, datasets, temp_char_mode=True)
@@ -858,19 +862,26 @@ class LSBGraphPlotter:
         min_minutes = min(elapsed_times) if elapsed_times else 0
         self._format_time_axis_temp_char(ax1, min_minutes, max_minutes)
 
-        # 左軸: ±8LSBで固定、2LSBごとに目盛り
-        ax1.set_ylim(-8, 8)
-        ax1.set_yticks(np.arange(-8, 10, 2))  # -8, -6, -4, -2, 0, 2, 4, 6, 8
+        # 左軸: Y軸範囲設定
+        if temp_yaxis_mode == "auto":
+            # オートモード: データ範囲に合わせる
+            self._format_lsb_axis(ax1, lsb_values)
+            y_min, y_max = ax1.get_ylim()
+        else:
+            # マニュアルモード: 指定値を使用
+            y_min, y_max = temp_yaxis_min, temp_yaxis_max
+            ax1.set_ylim(y_min, y_max)
+            ax1.set_yticks(np.arange(y_min, y_max + self.lsb_per_div, self.lsb_per_div))
         ax1.ticklabel_format(style='plain', axis='y', useOffset=False)
         ax1.grid(True, axis='y', alpha=0.5, linestyle='-', linewidth=0.5)
 
-        # 右軸: 温度
+        # 右軸: 温度（常に±8℃固定）
         ax2 = ax1.twinx()
         ax2.plot(temp_times, temp_values, color='#8B4513', linestyle='-',
                  linewidth=1.5, label='温度', alpha=0.8)
         ax2.set_ylabel('温度(℃)', color='black', rotation=270, labelpad=15)
         ax2.tick_params(axis='y', labelcolor='black')
-        ax2.set_ylim(-8, 8)  # 温度軸の範囲を±8に固定
+        ax2.set_ylim(-8, 8)  # 温度軸は±8℃固定
         ax2.set_yticks(np.arange(-8, 10, 2))  # 2℃ごとに目盛り
 
         # タイトル
