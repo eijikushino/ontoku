@@ -961,7 +961,7 @@ class GraphTab(ttk.Frame):
         self._create_section_averages_window(pos_sections, neg_sections, pos_serial, neg_serial)
 
     def _create_section_averages_window(self, pos_sections, neg_sections, pos_serial, neg_serial):
-        """区間別平均電圧の表示ウィンドウを作成"""
+        """温度係数表示ウィンドウを作成"""
         # 既存のウィンドウがあれば閉じる
         if hasattr(self, 'section_avg_window') and self.section_avg_window:
             try:
@@ -973,31 +973,39 @@ class GraphTab(ttk.Frame):
         # ウィンドウ作成
         self.section_avg_window = tk.Toplevel(self)
         self.section_avg_window.title("温度係数")
-        self.section_avg_window.geometry("700x500")
+        self.section_avg_window.geometry("750x700")
         self.section_avg_window.resizable(True, True)
 
         main_frame = ttk.Frame(self.section_avg_window, padding=10)
         main_frame.pack(fill=tk.BOTH, expand=True)
 
-        # 説明
-        ttk.Label(main_frame, text="温度係数算出用データ",
-                  font=('', 10, 'bold')).pack(anchor=tk.W, pady=(0, 10))
+        # スペック値（内部で使用）
+        self.temp_coef_spec_var = tk.StringVar(value="1.9")
 
-        # ノートブック（タブ）を作成
-        notebook = ttk.Notebook(main_frame)
-        notebook.pack(fill=tk.BOTH, expand=True)
+        # テーブル表示エリア（スクロール対応）
+        table_frame = ttk.Frame(main_frame)
+        table_frame.pack(fill=tk.BOTH, expand=True)
 
-        # POSタブ
-        if pos_sections:
-            pos_frame = ttk.Frame(notebook, padding=10)
-            notebook.add(pos_frame, text=f"POS ({pos_serial})")
-            self._create_section_table(pos_frame, pos_sections, "POS")
+        # キャンバスとスクロールバー
+        canvas = tk.Canvas(table_frame)
+        v_scrollbar = ttk.Scrollbar(table_frame, orient=tk.VERTICAL, command=canvas.yview)
+        h_scrollbar = ttk.Scrollbar(table_frame, orient=tk.HORIZONTAL, command=canvas.xview)
+        self.temp_coef_table_frame = ttk.Frame(canvas)
 
-        # NEGタブ
-        if neg_sections:
-            neg_frame = ttk.Frame(notebook, padding=10)
-            notebook.add(neg_frame, text=f"NEG ({neg_serial})")
-            self._create_section_table(neg_frame, neg_sections, "NEG")
+        self.temp_coef_table_frame.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+        )
+
+        canvas.create_window((0, 0), window=self.temp_coef_table_frame, anchor="nw")
+        canvas.configure(yscrollcommand=v_scrollbar.set, xscrollcommand=h_scrollbar.set)
+
+        v_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        h_scrollbar.pack(side=tk.BOTTOM, fill=tk.X)
+        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        # テーブル作成
+        self._create_temp_coef_table(pos_sections, neg_sections, pos_serial, neg_serial)
 
         # 閉じるボタン
         btn_frame = ttk.Frame(main_frame)
@@ -1005,61 +1013,205 @@ class GraphTab(ttk.Frame):
         ttk.Button(btn_frame, text="閉じる",
                    command=self.section_avg_window.destroy).pack(side=tk.RIGHT)
 
-    def _create_section_table(self, parent, sections, pole_name):
-        """区間データのテーブルを作成"""
-        # Treeview（テーブル）を作成
-        columns = ('section', 'code', 'avg_voltage', 'data_count', 'calc_method')
-        tree = ttk.Treeview(parent, columns=columns, show='headings', height=15)
+    def _create_temp_coef_table(self, pos_sections, neg_sections, pos_serial, neg_serial):
+        """温度係数テーブルを作成（添付画像形式）"""
+        parent = self.temp_coef_table_frame
 
-        # 列ヘッダー
-        tree.heading('section', text='温度')
-        tree.heading('code', text='コード')
-        tree.heading('avg_voltage', text='平均電圧 (V)')
-        tree.heading('data_count', text='データ数')
-        tree.heading('calc_method', text='計算方法')
+        # スペック値を取得
+        try:
+            spec_value = float(self.temp_coef_spec_var.get())
+        except ValueError:
+            spec_value = 1.9
 
-        # 列幅
-        tree.column('section', width=70, anchor='center')
-        tree.column('code', width=80, anchor='center')
-        tree.column('avg_voltage', width=150, anchor='e')
-        tree.column('data_count', width=100, anchor='center')
-        tree.column('calc_method', width=120, anchor='center')
+        # ヘッダー行
+        headers = ['ユニットNo.', '入力コード', '温度\n(℃)', '測定電圧\n(V)', 'ΔT\n(℃)', 'ΔV\n(V)',
+                   '温度係数\n(ppm/℃)', 'スペック\n(ppm/℃)', '判定']
+        header_widths = [10, 7, 4, 10, 4, 10, 9, 7, 4]
 
-        # データを追加
-        # 温特パターン: FFFFF→00000→80000 を5回繰り返し
-        # 区間番号を温度セットごとにグループ化
-        temp_labels = ['23℃(1)', '28℃', '18℃', '23℃(2)', '23℃戻し']
-        codes_per_temp = 3  # FFFFF, 00000, 80000
+        for col, (header, width) in enumerate(zip(headers, header_widths)):
+            label = tk.Label(parent, text=header, relief=tk.RIDGE, width=width,
+                           bg='#D0D0D0', font=('', 9))
+            label.grid(row=0, column=col, sticky='nsew', padx=0, pady=0)
+
+        # 斜線セル作成用ヘルパー関数
+        def create_diagonal_cell(row, col, width, rowspan=1):
+            """斜線付きの空セルを作成（左上から右下への対角線）"""
+            # 文字幅をピクセルに変換（概算: 1文字 ≈ 8px）
+            cell_width = width * 8
+            cell_height = 15 * rowspan
+            canvas = tk.Canvas(parent, width=cell_width, height=cell_height,
+                             bg='white', highlightthickness=1, highlightbackground='gray')
+            canvas.grid(row=row, column=col, rowspan=rowspan, sticky='nsew')
+            # 左上から右下への斜線を描画
+            canvas.create_line(0, 0, cell_width, cell_height, fill='gray')
+
+        # データ行を作成
+        row_idx = 1
+
+        # 行高さを均一にするための最小高さ設定
+        row_min_height = 15
+
+        # POS/NEGそれぞれ処理
+        for pole_idx, (sections, serial, pole) in enumerate([(pos_sections, pos_serial, "POS"),
+                                                              (neg_sections, neg_serial, "NEG")]):
+            if not sections:
+                continue
+
+            # コードごとにデータを整理（FFFFF, 80000, 00000）
+            code_data = self._organize_sections_by_code(sections)
+
+            unit_name = f"1PB397MK2\nDFH_{serial}\n{pole}"
+            unit_row_start = row_idx
+
+            # 23℃のフルスケール電圧範囲を計算
+            fffff_23 = code_data.get('FFFFF', {}).get(23, {}).get('voltage')
+            zero_23 = code_data.get('00000', {}).get(23, {}).get('voltage')
+            full_scale_23 = (fffff_23 - zero_23) if (fffff_23 is not None and zero_23 is not None) else None
+
+            for code_idx, code in enumerate(['FFFFF', '80000', '00000']):
+                if code not in code_data:
+                    continue
+
+                temps_data = code_data[code]  # {28: voltage, 23: voltage, 18: voltage}
+                code_row_start = row_idx
+
+                # 温度データ（28, 23, 18の順）- 各温度2行で合計6行
+                temp_order = [28, 23, 18]
+                ref_voltage = temps_data.get(23, {}).get('voltage')  # 23℃が基準
+                rows_per_temp = 2  # 各温度2行
+
+                for temp_idx, temp in enumerate(temp_order):
+                    if temp not in temps_data:
+                        continue
+
+                    voltage = temps_data[temp]['voltage']
+                    temp_row = code_row_start + temp_idx * rows_per_temp
+
+                    # 温度セル（2行結合）
+                    tk.Label(parent, text=str(temp), relief=tk.RIDGE,
+                            width=header_widths[2], font=('', 9), anchor='center', bg='white'
+                            ).grid(row=temp_row, column=2, rowspan=rows_per_temp, sticky='nsew')
+
+                    # 測定電圧セル（2行結合）
+                    tk.Label(parent, text=f"{voltage:.6f}" if voltage else "",
+                            relief=tk.RIDGE, width=header_widths[3],
+                            font=('', 9), anchor='e', bg='white'
+                            ).grid(row=temp_row, column=3, rowspan=rows_per_temp, sticky='nsew')
+
+                row_idx = code_row_start + len(temp_order) * rows_per_temp
+
+                # ΔT以降のセル - 28→23の計算（行1-2に跨る）
+                if 28 in temps_data and 23 in temps_data:
+                    v28 = temps_data[28]['voltage']
+                    v23 = temps_data[23]['voltage']
+                    delta_t_28 = 5.0
+                    delta_v_28 = v28 - v23
+                    temp_coef_28 = (delta_v_28 / full_scale_23) * 1e6 / delta_t_28 if full_scale_23 else 0
+                    judgment_28 = "OK" if abs(temp_coef_28) <= spec_value else "NG"
+                    bg_28 = '#FFCCCC' if judgment_28 == "NG" else 'white'
+
+                    # 28℃の下半分と23℃の上半分に跨る（row 1-2）
+                    delta_row = code_row_start + 1
+                    tk.Label(parent, text=f"{delta_t_28:.1f}", relief=tk.RIDGE, width=header_widths[4],
+                            font=('', 9), anchor='e', bg='white').grid(row=delta_row, column=4, rowspan=2, sticky='nsew')
+                    tk.Label(parent, text=f"{delta_v_28:.6f}", relief=tk.RIDGE, width=header_widths[5],
+                            font=('', 9), anchor='e', bg='white').grid(row=delta_row, column=5, rowspan=2, sticky='nsew')
+                    tk.Label(parent, text=f"{temp_coef_28:.1f}", relief=tk.RIDGE, width=header_widths[6],
+                            font=('', 9), anchor='e', bg=bg_28).grid(row=delta_row, column=6, rowspan=2, sticky='nsew')
+                    tk.Label(parent, text=judgment_28, relief=tk.RIDGE, width=header_widths[8],
+                            font=('', 9), anchor='center', bg=bg_28).grid(row=delta_row, column=8, rowspan=2, sticky='nsew')
+
+                # ΔT以降のセル - 23→18の計算（行3-4に跨る）
+                if 23 in temps_data and 18 in temps_data:
+                    v23 = temps_data[23]['voltage']
+                    v18 = temps_data[18]['voltage']
+                    delta_t_18 = -5.0
+                    delta_v_18 = v18 - v23
+                    temp_coef_18 = (delta_v_18 / full_scale_23) * 1e6 / delta_t_18 if full_scale_23 else 0
+                    judgment_18 = "OK" if abs(temp_coef_18) <= spec_value else "NG"
+                    bg_18 = '#FFCCCC' if judgment_18 == "NG" else 'white'
+
+                    # 23℃の下半分と18℃の上半分に跨る（row 3-4）
+                    delta_row = code_row_start + 3
+                    tk.Label(parent, text=f"{delta_t_18:.1f}", relief=tk.RIDGE, width=header_widths[4],
+                            font=('', 9), anchor='e', bg='white').grid(row=delta_row, column=4, rowspan=2, sticky='nsew')
+                    tk.Label(parent, text=f"{delta_v_18:.6f}", relief=tk.RIDGE, width=header_widths[5],
+                            font=('', 9), anchor='e', bg='white').grid(row=delta_row, column=5, rowspan=2, sticky='nsew')
+                    tk.Label(parent, text=f"{temp_coef_18:.1f}", relief=tk.RIDGE, width=header_widths[6],
+                            font=('', 9), anchor='e', bg=bg_18).grid(row=delta_row, column=6, rowspan=2, sticky='nsew')
+                    tk.Label(parent, text=judgment_18, relief=tk.RIDGE, width=header_widths[8],
+                            font=('', 9), anchor='center', bg=bg_18).grid(row=delta_row, column=8, rowspan=2, sticky='nsew')
+
+                # 空セル（ΔT列の上端と下端）- 斜線付き
+                for col in [4, 5, 6, 8]:
+                    create_diagonal_cell(code_row_start, col, header_widths[col])
+                    create_diagonal_cell(code_row_start + 5, col, header_widths[col])
+
+                # 入力コードのセル結合（縦6行）
+                tk.Label(parent, text=f"{code} H", relief=tk.RIDGE, width=header_widths[1],
+                        font=('', 9), bg='white').grid(row=code_row_start, column=1, rowspan=6, sticky='nsew')
+
+                # 各行の高さを均一に設定
+                for r in range(6):
+                    parent.grid_rowconfigure(code_row_start + r, minsize=row_min_height)
+
+            # 各コード6行 × 3コード = 18行
+            total_rows = 6 * 3  # FFFFF, 80000, 00000
+            row_idx = unit_row_start + total_rows
+
+            # ユニットNo.のセル結合（縦）
+            tk.Label(parent, text=unit_name, relief=tk.RIDGE, width=header_widths[0],
+                    font=('', 9), bg='white').grid(row=unit_row_start, column=0, rowspan=total_rows, sticky='nsew')
+
+        # スペックのセル結合（POS/NEG全体で共通）
+        total_data_rows = row_idx - 1  # ヘッダー行を除いた全データ行数
+        if total_data_rows > 0:
+            tk.Label(parent, text=f"{spec_value:.1f}", relief=tk.RIDGE, width=header_widths[7],
+                    font=('', 9), anchor='center', bg='white').grid(row=1, column=7, rowspan=total_data_rows, sticky='nsew')
+
+    def _organize_sections_by_code(self, sections):
+        """区間データをコードと温度で整理"""
+        # 温特パターン: FFFFF→00000→80000 を繰り返し
+        # 温度順: 23℃(1), 28℃, 18℃, 23℃(2), 23℃戻し
+        temp_mapping = {
+            0: 23,   # 23℃(1) - 基準値として使用
+            1: 28,   # 28℃
+            2: 18,   # 18℃
+            3: 23,   # 23℃(2)
+            4: 23,   # 23℃戻し - 参考値
+        }
+
+        code_data = {}  # {code: {temp: {'voltage': v, 'temp_set': idx}}}
+        codes_per_temp = 3
 
         for i, section in enumerate(sections):
-            temp_idx = i // codes_per_temp
-            if temp_idx < len(temp_labels):
-                temp_label = temp_labels[temp_idx]
+            temp_set_idx = i // codes_per_temp
+            code = section['code']
+
+            if temp_set_idx not in temp_mapping:
+                continue
+
+            temp = temp_mapping[temp_set_idx]
+
+            if code not in code_data:
+                code_data[code] = {}
+
+            # 23℃は最初の値（temp_set_idx=0）を基準として使用
+            # 28℃、18℃はそれぞれ1回のみ
+            if temp == 23:
+                # 23℃(1)のデータを基準として使用（temp_set_idx=0）
+                if temp_set_idx == 0:
+                    code_data[code][temp] = {
+                        'voltage': section['avg_voltage'],
+                        'temp_set': temp_set_idx
+                    }
             else:
-                temp_label = f"区間{temp_idx + 1}"
+                code_data[code][temp] = {
+                    'voltage': section['avg_voltage'],
+                    'temp_set': temp_set_idx
+                }
 
-            # 計算方法の表示
-            if section.get('use_last_10min', False):
-                calc_method = "最後10分"
-                data_count_str = f"{section['data_count']}/{section['total_data_count']}"
-            else:
-                calc_method = "全データ"
-                data_count_str = str(section['data_count'])
-
-            tree.insert('', 'end', values=(
-                temp_label,
-                section['code'],
-                f"{section['avg_voltage']:.6f}",
-                data_count_str,
-                calc_method
-            ))
-
-        # スクロールバー
-        scrollbar = ttk.Scrollbar(parent, orient=tk.VERTICAL, command=tree.yview)
-        tree.configure(yscrollcommand=scrollbar.set)
-
-        tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        return code_data
 
     def _format_minutes(self, minutes):
         """分を時:分形式にフォーマット"""
