@@ -531,9 +531,9 @@ class GraphTab(ttk.Frame):
         # 設定画面ウィンドウ（温特グラフと被らないように右端に配置）
         self.temp_settings_window = tk.Toplevel(self)
         self.temp_settings_window.title("温特グラフ詳細設定")
-        # 画面右端に配置
+        # 画面右端に配置（高さを拡大）
         screen_width = self.temp_settings_window.winfo_screenwidth()
-        self.temp_settings_window.geometry(f"420x560+{screen_width - 450}+50")
+        self.temp_settings_window.geometry(f"420x720+{screen_width - 450}+50")
         self.temp_settings_window.resizable(False, False)
 
         # 選択されたキーを保存
@@ -541,6 +541,12 @@ class GraphTab(ttk.Frame):
 
         # Y軸設定用変数（デフォルト選択時用）
         self.temp_yaxis_select_var = tk.StringVar(value="default")
+
+        # NEG絶対値無効オプション
+        self.neg_no_abs_var = tk.BooleanVar(value=False)
+
+        # X軸全表示オプション（デフォルト: 25div=250分）
+        self.xaxis_full_var = tk.BooleanVar(value=False)
 
         main_frame = ttk.Frame(self.temp_settings_window, padding=15)
         main_frame.pack(fill=tk.BOTH, expand=True)
@@ -566,6 +572,17 @@ class GraphTab(ttk.Frame):
         self.calc_neg_zero_label.pack(anchor=tk.W, pady=1)
         self.calc_neg_lsb_label = ttk.Label(calc_frame, text="  LSB電圧: ---")
         self.calc_neg_lsb_label.pack(anchor=tk.W, pady=1)
+
+        # NEG絶対値無効チェックボックス
+        neg_abs_frame = ttk.Frame(calc_frame)
+        neg_abs_frame.pack(anchor=tk.W, pady=(5, 0))
+        self.neg_no_abs_check = ttk.Checkbutton(
+            neg_abs_frame,
+            text="NEG: 絶対値を使用しない（LSB電圧が負になる）",
+            variable=self.neg_no_abs_var,
+            command=self._on_neg_no_abs_changed
+        )
+        self.neg_no_abs_check.pack(anchor=tk.W, padx=10)
 
         # Y軸(LSB)設定エリア
         yaxis_frame = ttk.LabelFrame(main_frame, text="Y軸(LSB)設定", padding=10)
@@ -602,9 +619,16 @@ class GraphTab(ttk.Frame):
         ttk.Label(div_frame, text="縦軸LSB/Div:", width=12).pack(side=tk.LEFT)
         ttk.Entry(div_frame, textvariable=self.lsb_per_div_var, width=10).pack(side=tk.LEFT, padx=5)
 
-        # 縦軸更新ボタン（Y軸設定内）
-        ttk.Button(yaxis_frame, text="縦軸更新",
-                   command=self._apply_yaxis_to_temp_graph).pack(anchor=tk.E, pady=(8, 0))
+        # Y軸選択変更時に自動更新
+        self.temp_yaxis_select_var.trace_add('write', lambda *args: self._redraw_temp_graph_preserve_position())
+
+        # X軸設定エリア（別枠）
+        xaxis_frame = ttk.LabelFrame(main_frame, text="X軸設定", padding=10)
+        xaxis_frame.pack(fill=tk.X, pady=(0, 10))
+
+        ttk.Checkbutton(xaxis_frame, text="全表示（デフォルト: 25div=250分）",
+                        variable=self.xaxis_full_var,
+                        command=self._on_xaxis_full_changed).pack(anchor=tk.W)
 
         # PNG保存エリア
         save_frame = ttk.LabelFrame(main_frame, text="グラフ保存", padding=10)
@@ -612,6 +636,13 @@ class GraphTab(ttk.Frame):
 
         ttk.Button(save_frame, text="グラフをPNG保存",
                    command=self._save_temp_graphs).pack(anchor=tk.W)
+
+        # 区間別平均電圧表示エリア
+        analysis_frame = ttk.LabelFrame(main_frame, text="データ解析", padding=10)
+        analysis_frame.pack(fill=tk.X, pady=(0, 10))
+
+        ttk.Button(analysis_frame, text="温度係数表示",
+                   command=self._show_section_averages).pack(anchor=tk.W)
 
         # 閉じるボタン
         btn_frame = ttk.Frame(main_frame)
@@ -700,11 +731,18 @@ class GraphTab(ttk.Frame):
         self.temp_graph_pos_serial = None
         self.temp_graph_neg_serial = None
 
+        # NEG絶対値無効オプションを取得
+        neg_no_abs = self.neg_no_abs_var.get()
+        # X軸全表示オプションを取得
+        xaxis_full = self.xaxis_full_var.get()
+
         for key in self.temp_graph_selected_keys:
             serial, pole = key.rsplit('_', 1)
+            # NEGの場合のみneg_no_absを適用
+            use_no_abs = neg_no_abs if pole == "NEG" else False
             calc_info = plotter.plot_temperature_characteristic(
                 self.csv_data, self.temp_csv_data, serial, pole,
-                yaxis_mode, yaxis_min, yaxis_max
+                yaxis_mode, yaxis_min, yaxis_max, use_no_abs, xaxis_full
             )
             if calc_info:
                 if pole == "POS":
@@ -795,6 +833,45 @@ class GraphTab(ttk.Frame):
         # 再描画
         self._draw_temp_graph_and_update_calc()
 
+    def _on_neg_no_abs_changed(self):
+        """NEG絶対値無効チェックボックスの変更時: グラフを再描画（位置保持）"""
+        self._redraw_temp_graph_preserve_position()
+
+    def _on_xaxis_full_changed(self):
+        """X軸全表示チェックボックスの変更時: グラフを再描画（位置保持）"""
+        self._redraw_temp_graph_preserve_position()
+
+    def _redraw_temp_graph_preserve_position(self):
+        """温特グラフを位置を保持して再描画"""
+        import matplotlib.pyplot as plt
+
+        # 既存のグラフウィンドウの位置を保存
+        graph_positions = []
+        for fig_num in plt.get_fignums():
+            try:
+                fig = plt.figure(fig_num)
+                manager = fig.canvas.manager
+                x = manager.window.winfo_x()
+                y = manager.window.winfo_y()
+                graph_positions.append((x, y))
+            except:
+                pass
+
+        plt.close('all')
+        self._draw_temp_graph_and_update_calc()
+
+        # 新しいグラフウィンドウを保存した位置に移動
+        if graph_positions:
+            for i, fig_num in enumerate(plt.get_fignums()):
+                if i < len(graph_positions):
+                    try:
+                        fig = plt.figure(fig_num)
+                        manager = fig.canvas.manager
+                        x, y = graph_positions[i]
+                        manager.window.geometry(f"+{x}+{y}")
+                    except:
+                        pass
+
     def _save_temp_graphs(self):
         """温特グラフをPNG保存（POS/NEG両方）"""
         import os
@@ -837,3 +914,158 @@ class GraphTab(ttk.Frame):
                 messagebox.showinfo("成功", msg)
         else:
             messagebox.showerror("エラー", "保存に失敗しました:\n" + "\n".join(errors))
+
+    def _show_section_averages(self):
+        """区間別平均電圧を表示するウィンドウを開く"""
+        if not self.csv_data:
+            messagebox.showerror("エラー", "測定CSVファイルを読み込んでください")
+            return
+
+        # 設定値を取得
+        try:
+            bit_precision = int(self.bit_precision_var.get())
+            pos_full = float(self.pos_full_var.get())
+            neg_full = float(self.neg_full_var.get())
+            skip_after_change = int(self.skip_after_change_var.get())
+            skip_first_data = self.skip_first_data_var.get()
+            skip_before_change = self.skip_before_change_var.get()
+        except ValueError:
+            messagebox.showerror("エラー", "設定値が不正です")
+            return
+
+        # LSBGraphPlotterを作成
+        plotter = LSBGraphPlotter(bit_precision, pos_full, neg_full, 2, "first_avg",
+                                  "auto", None, None,
+                                  skip_after_change, skip_first_data, skip_before_change)
+
+        # 選択されたデータの区間平均を取得
+        pos_sections = None
+        neg_sections = None
+        pos_serial = None
+        neg_serial = None
+
+        for key in self.temp_graph_selected_keys:
+            serial, pole = key.rsplit('_', 1)
+            column_name = f"{serial}_{pole}"
+            sections = plotter.extract_section_averages(
+                self.csv_data, serial, pole, column_name, last_minutes=10
+            )
+            if pole == "POS":
+                pos_sections = sections
+                pos_serial = serial
+            elif pole == "NEG":
+                neg_sections = sections
+                neg_serial = serial
+
+        # 結果表示ウィンドウを作成
+        self._create_section_averages_window(pos_sections, neg_sections, pos_serial, neg_serial)
+
+    def _create_section_averages_window(self, pos_sections, neg_sections, pos_serial, neg_serial):
+        """区間別平均電圧の表示ウィンドウを作成"""
+        # 既存のウィンドウがあれば閉じる
+        if hasattr(self, 'section_avg_window') and self.section_avg_window:
+            try:
+                if self.section_avg_window.winfo_exists():
+                    self.section_avg_window.destroy()
+            except:
+                pass
+
+        # ウィンドウ作成
+        self.section_avg_window = tk.Toplevel(self)
+        self.section_avg_window.title("温度係数")
+        self.section_avg_window.geometry("700x500")
+        self.section_avg_window.resizable(True, True)
+
+        main_frame = ttk.Frame(self.section_avg_window, padding=10)
+        main_frame.pack(fill=tk.BOTH, expand=True)
+
+        # 説明
+        ttk.Label(main_frame, text="温度係数算出用データ",
+                  font=('', 10, 'bold')).pack(anchor=tk.W, pady=(0, 10))
+
+        # ノートブック（タブ）を作成
+        notebook = ttk.Notebook(main_frame)
+        notebook.pack(fill=tk.BOTH, expand=True)
+
+        # POSタブ
+        if pos_sections:
+            pos_frame = ttk.Frame(notebook, padding=10)
+            notebook.add(pos_frame, text=f"POS ({pos_serial})")
+            self._create_section_table(pos_frame, pos_sections, "POS")
+
+        # NEGタブ
+        if neg_sections:
+            neg_frame = ttk.Frame(notebook, padding=10)
+            notebook.add(neg_frame, text=f"NEG ({neg_serial})")
+            self._create_section_table(neg_frame, neg_sections, "NEG")
+
+        # 閉じるボタン
+        btn_frame = ttk.Frame(main_frame)
+        btn_frame.pack(fill=tk.X, pady=10)
+        ttk.Button(btn_frame, text="閉じる",
+                   command=self.section_avg_window.destroy).pack(side=tk.RIGHT)
+
+    def _create_section_table(self, parent, sections, pole_name):
+        """区間データのテーブルを作成"""
+        # Treeview（テーブル）を作成
+        columns = ('section', 'code', 'avg_voltage', 'data_count', 'calc_method')
+        tree = ttk.Treeview(parent, columns=columns, show='headings', height=15)
+
+        # 列ヘッダー
+        tree.heading('section', text='温度')
+        tree.heading('code', text='コード')
+        tree.heading('avg_voltage', text='平均電圧 (V)')
+        tree.heading('data_count', text='データ数')
+        tree.heading('calc_method', text='計算方法')
+
+        # 列幅
+        tree.column('section', width=70, anchor='center')
+        tree.column('code', width=80, anchor='center')
+        tree.column('avg_voltage', width=150, anchor='e')
+        tree.column('data_count', width=100, anchor='center')
+        tree.column('calc_method', width=120, anchor='center')
+
+        # データを追加
+        # 温特パターン: FFFFF→00000→80000 を5回繰り返し
+        # 区間番号を温度セットごとにグループ化
+        temp_labels = ['23℃(1)', '28℃', '18℃', '23℃(2)', '23℃戻し']
+        codes_per_temp = 3  # FFFFF, 00000, 80000
+
+        for i, section in enumerate(sections):
+            temp_idx = i // codes_per_temp
+            if temp_idx < len(temp_labels):
+                temp_label = temp_labels[temp_idx]
+            else:
+                temp_label = f"区間{temp_idx + 1}"
+
+            # 計算方法の表示
+            if section.get('use_last_10min', False):
+                calc_method = "最後10分"
+                data_count_str = f"{section['data_count']}/{section['total_data_count']}"
+            else:
+                calc_method = "全データ"
+                data_count_str = str(section['data_count'])
+
+            tree.insert('', 'end', values=(
+                temp_label,
+                section['code'],
+                f"{section['avg_voltage']:.6f}",
+                data_count_str,
+                calc_method
+            ))
+
+        # スクロールバー
+        scrollbar = ttk.Scrollbar(parent, orient=tk.VERTICAL, command=tree.yview)
+        tree.configure(yscrollcommand=scrollbar.set)
+
+        tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+
+    def _format_minutes(self, minutes):
+        """分を時:分形式にフォーマット"""
+        hours = int(minutes // 60)
+        mins = int(minutes % 60)
+        if hours > 0:
+            return f"{hours}h{mins:02d}m"
+        else:
+            return f"{mins}m"

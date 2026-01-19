@@ -815,7 +815,7 @@ class LSBGraphPlotter:
             parent, serial, pole, elapsed_times, lsb_values, codes, datasets
         )
 
-    def extract_data_for_temp_characteristic(self, csv_data, serial, pole, column_name):
+    def extract_data_for_temp_characteristic(self, csv_data, serial, pole, column_name, no_abs=False):
         """
         温特グラフ用データ抽出（実測値からLSB電圧を計算）
 
@@ -826,6 +826,7 @@ class LSBGraphPlotter:
             serial: シリアルNo.
             pole: "POS" or "NEG"
             column_name: 列名
+            no_abs: LSB電圧計算で絶対値を使用しない（デフォルト: False）
 
         Returns:
             (elapsed_times, lsb_values, codes, datasets, calc_info): タプル
@@ -923,7 +924,11 @@ class LSBGraphPlotter:
 
         # LSB電圧を計算
         if fffff_avg is not None and zero_avg is not None:
-            measured_lsb_voltage = abs(fffff_avg - zero_avg) / (2 ** self.bit_precision - 1)
+            if no_abs:
+                # 絶対値を使用しない（NEGの場合、符号が負になる可能性あり）
+                measured_lsb_voltage = (fffff_avg - zero_avg) / (2 ** self.bit_precision - 1)
+            else:
+                measured_lsb_voltage = abs(fffff_avg - zero_avg) / (2 ** self.bit_precision - 1)
         else:
             # 計算できない場合は理論値を使用
             measured_lsb_voltage = self.lsb_voltage
@@ -933,7 +938,8 @@ class LSBGraphPlotter:
             '00000_avg': zero_avg,
             'lsb_voltage': measured_lsb_voltage,
             'has_fffff': len(fffff_voltages) > 0,
-            'has_zero': len(zero_voltages) > 0
+            'has_zero': len(zero_voltages) > 0,
+            'no_abs': no_abs
         }
 
         # 第2パス: LSB値に変換（初回平均モードで計算）
@@ -951,7 +957,8 @@ class LSBGraphPlotter:
         return elapsed_times, lsb_values, codes, datasets, calc_info
 
     def plot_temperature_characteristic(self, csv_data, temp_csv_data, serial, pole,
-                                         temp_yaxis_mode="manual", temp_yaxis_min=-8, temp_yaxis_max=8):
+                                         temp_yaxis_mode="manual", temp_yaxis_min=-8, temp_yaxis_max=8,
+                                         no_abs=False, xaxis_full=False):
         """
         温特グラフを表示（2軸: LSB変動 + 温度差）
 
@@ -963,6 +970,8 @@ class LSBGraphPlotter:
             temp_yaxis_mode: Y軸モード ("auto" or "manual")
             temp_yaxis_min: Y軸(LSB)最小値（デフォルト: -8）
             temp_yaxis_max: Y軸(LSB)最大値（デフォルト: 8）
+            no_abs: LSB電圧計算で絶対値を使用しない（デフォルト: False）
+            xaxis_full: X軸全表示（デフォルト: False=25div固定）
 
         Returns:
             True: 成功, None: 失敗
@@ -971,7 +980,7 @@ class LSBGraphPlotter:
 
         # 測定データからLSBデータを抽出（温特グラフ用：実測LSB電圧を使用）
         elapsed_times, lsb_values, codes, datasets, calc_info = self.extract_data_for_temp_characteristic(
-            csv_data, serial, pole, column_name
+            csv_data, serial, pole, column_name, no_abs=no_abs
         )
 
         if not elapsed_times:
@@ -992,10 +1001,10 @@ class LSBGraphPlotter:
         ax1.set_ylabel('変動値 20bit@LSB/Div', color='black')
         ax1.tick_params(axis='y', labelcolor='black')
 
-        # X軸フォーマット（データ範囲に合わせる、余白なし、目盛りラベルなし）
+        # X軸フォーマット（デフォルト25div=250分、または全表示）
         max_minutes = max(elapsed_times) if elapsed_times else 60
         min_minutes = min(elapsed_times) if elapsed_times else 0
-        self._format_time_axis_temp_char(ax1, min_minutes, max_minutes)
+        self._format_time_axis_temp_char(ax1, min_minutes, max_minutes, xaxis_full)
 
         # 左軸: Y軸範囲設定
         if temp_yaxis_mode == "auto":
@@ -1182,7 +1191,7 @@ class LSBGraphPlotter:
         # データ範囲に合わせてX軸を設定（余白なし）
         ax.set_xlim(min_minutes, max_minutes)
 
-    def _format_time_axis_temp_char(self, ax, min_minutes, max_minutes):
+    def _format_time_axis_temp_char(self, ax, min_minutes, max_minutes, xaxis_full=False):
         """
         温特グラフ用X軸フォーマット（10分ごとの補助線、目盛りラベルなし）
 
@@ -1190,19 +1199,194 @@ class LSBGraphPlotter:
             ax: Matplotlibのaxisオブジェクト
             min_minutes: 最小経過時間（分）
             max_minutes: 最大経過時間（分）
+            xaxis_full: 全表示モード（False=25div固定、True=データ範囲）
         """
         tick_interval = 10  # 10分/Div
+        default_max = 250  # デフォルト25div = 250分
+
+        if xaxis_full:
+            # 全表示モード: データ範囲に合わせる
+            display_max = max_minutes
+        else:
+            # デフォルト: 25div=250分固定
+            display_max = default_max
 
         # 目盛り位置を計算（10分ごと）
-        start_tick = int(min_minutes / tick_interval) * tick_interval
-        end_tick = int(np.ceil(max_minutes / tick_interval)) * tick_interval
+        start_tick = 0
+        end_tick = int(np.ceil(display_max / tick_interval)) * tick_interval
         ticks = np.arange(start_tick, end_tick + tick_interval, tick_interval)
 
         ax.set_xticks(ticks)
         ax.set_xticklabels(['' for _ in ticks])  # 目盛りラベルなし
-        # データ範囲に合わせてX軸を設定（余白なし）
-        ax.set_xlim(min_minutes, max_minutes)
+        # X軸範囲を設定（0から開始）
+        ax.set_xlim(0, display_max)
 
         # 10分ごとに補助線（グリッド）を追加
         ax.grid(True, axis='x', alpha=0.5, linestyle='-', linewidth=0.5)
         ax.grid(True, axis='y', alpha=0.3, linestyle='-', linewidth=0.5)
+
+    def extract_section_averages(self, csv_data, serial, pole, column_name, last_minutes=10):
+        """
+        各区間の平均電圧を抽出（最後のN分から計算）
+
+        温特パターン構成:
+        1. 23℃: FFFFF → 00000 → 80000
+        2. 28℃: FFFFF → 00000 → 80000
+        3. 18℃: FFFFF → 00000 → 80000
+        4. 23℃: FFFFF → 00000 → 80000
+
+        Args:
+            csv_data: CSVデータのリスト
+            serial: シリアルNo.
+            pole: "POS" or "NEG"
+            column_name: 列名
+            last_minutes: 平均計算に使用する最後のN分（デフォルト: 10分）
+
+        Returns:
+            list: 各区間の情報リスト
+                [{
+                    'section_num': 区間番号（1始まり）,
+                    'code': コード名（FFFFF/00000/80000）,
+                    'avg_voltage': 平均電圧,
+                    'data_count': データ数,
+                    'total_minutes': 区間の総時間（分）,
+                    'used_minutes': 計算に使用した時間（分）
+                }, ...]
+        """
+        # 生データを収集
+        raw_data = []
+        base_timestamp = None
+
+        for row in csv_data:
+            if column_name in row and row[column_name]:
+                try:
+                    timestamp_str = row.get('Timestamp', '')
+                    if not timestamp_str:
+                        continue
+
+                    timestamp = self.parse_timestamp(timestamp_str)
+                    if base_timestamp is None:
+                        base_timestamp = timestamp
+
+                    elapsed_min = self.calculate_elapsed_time(timestamp, base_timestamp)
+                    code_str = row.get('Code', '')
+                    dataset = row.get('DataSet', '')
+                    voltage = float(row[column_name])
+
+                    raw_data.append({
+                        'elapsed_min': elapsed_min,
+                        'voltage': voltage,
+                        'code': code_str,
+                        'dataset': dataset
+                    })
+
+                except (ValueError, KeyError):
+                    continue
+
+        if not raw_data:
+            return []
+
+        # スキップ処理
+        codes = [d['code'] for d in raw_data]
+        datasets = [d['dataset'] for d in raw_data]
+        if (self.skip_after_change > 0 or self.skip_first_data or self.skip_before_change):
+            skip_indices = self._get_skip_indices(codes, datasets)
+            raw_data = [raw_data[i] for i in range(len(raw_data)) if i not in skip_indices]
+
+        if not raw_data:
+            return []
+
+        # 区間を検出（連続する同じコードを1区間とする）
+        sections = []
+        current_section = None
+        current_code = None
+
+        for data in raw_data:
+            code_upper = data['code'].upper().strip()
+            # コード名を正規化
+            if 'FFFFF' in code_upper:
+                normalized_code = 'FFFFF'
+            elif '00000' in code_upper:
+                normalized_code = '00000'
+            elif '80000' in code_upper:
+                normalized_code = '80000'
+            else:
+                normalized_code = code_upper
+
+            if normalized_code != current_code:
+                # 新しい区間開始
+                if current_section is not None:
+                    sections.append(current_section)
+                current_section = {
+                    'code': normalized_code,
+                    'data': [data]
+                }
+                current_code = normalized_code
+            else:
+                current_section['data'].append(data)
+
+        # 最後の区間を追加
+        if current_section is not None:
+            sections.append(current_section)
+
+        # 各区間の平均を計算
+        # 温特パターン: FFFFF→00000→80000 を5回繰り返し（23℃, 28℃, 18℃, 23℃, 23℃戻し）
+        # 28℃〜23℃(2)のFFFFFのみ最後10分を使用、それ以外は全データを使用
+        # 23℃戻しは参考値なので全データを使用
+        codes_per_temp = 3  # FFFFF, 00000, 80000
+        first_temp_sections = codes_per_temp  # 最初の23℃は3区間（0,1,2）
+        last_temp_start = codes_per_temp * 4  # 23℃戻しの開始区間（12）
+
+        results = []
+        for i, section in enumerate(sections):
+            data_list = section['data']
+            if not data_list:
+                continue
+
+            # 区間の時間範囲
+            start_time = data_list[0]['elapsed_min']
+            end_time = data_list[-1]['elapsed_min']
+            total_minutes = end_time - start_time
+
+            # 28℃〜23℃(2)のFFFFFかどうかを判定
+            # 区間番号: 0,1,2=23℃(1), 3,4,5=28℃, 6,7,8=18℃, 9,10,11=23℃(2), 12,13,14=23℃戻し
+            # FFFFFは各温度の最初（0, 3, 6, 9, 12）
+            is_fffff = section['code'] == 'FFFFF'
+            is_after_first_temp = i >= first_temp_sections  # 28℃以降
+            is_last_temp = i >= last_temp_start  # 23℃戻し
+
+            if is_fffff and is_after_first_temp and not is_last_temp:
+                # 28℃〜23℃(2)のFFFFF: 最後10分のデータを使用
+                cutoff_time = end_time - last_minutes
+                calc_data = [d for d in data_list if d['elapsed_min'] >= cutoff_time]
+                if not calc_data:
+                    calc_data = data_list
+                use_last_10min = True
+            else:
+                # それ以外（23℃(1)、00000/80000、23℃戻し）: 全データを使用
+                calc_data = data_list
+                use_last_10min = False
+
+            # 平均電圧を計算
+            voltages = [d['voltage'] for d in calc_data]
+            avg_voltage = sum(voltages) / len(voltages)
+
+            # 使用した時間範囲
+            used_start = calc_data[0]['elapsed_min']
+            used_end = calc_data[-1]['elapsed_min']
+            used_minutes = used_end - used_start
+
+            results.append({
+                'section_num': i + 1,
+                'code': section['code'],
+                'avg_voltage': avg_voltage,
+                'data_count': len(calc_data),
+                'total_data_count': len(data_list),
+                'total_minutes': total_minutes,
+                'used_minutes': used_minutes,
+                'start_time': start_time,
+                'end_time': end_time,
+                'use_last_10min': use_last_10min
+            })
+
+        return results

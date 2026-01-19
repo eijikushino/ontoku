@@ -5,7 +5,7 @@
     "lsb_per_div": "1",
     "ref_mode": "first_avg",
     "yaxis_mode": "manual",
-    "yaxis_min": "-5",
+    "yaxis_min": "-10",
     "yaxis_max": "5",
     "skip_after_change": "0",
     "skip_first_data": false,
