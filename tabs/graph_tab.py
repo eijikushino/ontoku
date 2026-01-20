@@ -366,7 +366,7 @@ class GraphTab(ttk.Frame):
     def _load_csv_from_path(self, filename, show_message=True):
         """指定パスからCSVファイルを読み込み"""
         try:
-            with open(filename, 'r', encoding='utf-8') as f:
+            with open(filename, 'r', encoding='utf-8-sig') as f:
                 reader = csv.DictReader(f)
                 self.csv_data = list(reader)
                 headers = reader.fieldnames
@@ -483,7 +483,7 @@ class GraphTab(ttk.Frame):
     def _load_temp_csv_from_path(self, filename, show_message=True):
         """指定パスから温度CSVファイルを読み込み"""
         try:
-            with open(filename, 'r', encoding='utf-8') as f:
+            with open(filename, 'r', encoding='utf-8-sig') as f:
                 reader = csv.DictReader(f)
                 self.temp_csv_data = list(reader)
 
@@ -725,7 +725,13 @@ class GraphTab(ttk.Frame):
                                   yaxis_mode, yaxis_min, yaxis_max,
                                   skip_after_change, skip_first_data, skip_before_change)
 
-        # 選択されたデータをプロット（POS/NEG別に計算結果とfigureを保存）
+        # 選択されたデータをプロット（全グラフの計算結果とfigureを保存）
+        # 辞書形式: {serial: calc_info}
+        if not hasattr(self, 'temp_graph_all_info'):
+            self.temp_graph_all_info = {}
+        self.temp_graph_all_info = {}  # 毎回リセット
+
+        # 互換性のため旧変数も維持
         self.temp_graph_pos_info = None
         self.temp_graph_neg_info = None
         self.temp_graph_pos_serial = None
@@ -745,6 +751,10 @@ class GraphTab(ttk.Frame):
                 yaxis_mode, yaxis_min, yaxis_max, use_no_abs, xaxis_full
             )
             if calc_info:
+                # 全グラフ情報を保存
+                self.temp_graph_all_info[f"{serial}_{pole}"] = calc_info
+
+                # 互換性のため旧変数も更新
                 if pole == "POS":
                     self.temp_graph_pos_info = calc_info
                     self.temp_graph_pos_serial = serial
@@ -873,15 +883,16 @@ class GraphTab(ttk.Frame):
                         pass
 
     def _save_temp_graphs(self):
-        """温特グラフをPNG保存（POS/NEG両方）"""
+        """温特グラフをPNG保存（表示中の全グラフ）"""
         import os
 
-        # 保存するグラフがあるか確認
+        # 保存するグラフがあるか確認（全グラフ情報から取得）
         graphs_to_save = []
-        if self.temp_graph_pos_info and self.temp_graph_pos_info.get('figure'):
-            graphs_to_save.append(("POS", self.temp_graph_pos_info['figure'], self.temp_graph_pos_serial))
-        if self.temp_graph_neg_info and self.temp_graph_neg_info.get('figure'):
-            graphs_to_save.append(("NEG", self.temp_graph_neg_info['figure'], self.temp_graph_neg_serial))
+        if hasattr(self, 'temp_graph_all_info') and self.temp_graph_all_info:
+            for key, calc_info in self.temp_graph_all_info.items():
+                if calc_info and calc_info.get('figure'):
+                    serial, pole = key.rsplit('_', 1)
+                    graphs_to_save.append((serial, pole, calc_info['figure']))
 
         if not graphs_to_save:
             messagebox.showerror("エラー", "保存するグラフがありません")
@@ -895,7 +906,7 @@ class GraphTab(ttk.Frame):
         # 保存実行
         saved_files = []
         errors = []
-        for pole, fig, serial in graphs_to_save:
+        for serial, pole, fig in graphs_to_save:
             filename = f"温特グラフ_{serial}_{pole}.png"
             filepath = os.path.join(folder_path, filename)
             try:
@@ -921,6 +932,12 @@ class GraphTab(ttk.Frame):
             messagebox.showerror("エラー", "測定CSVファイルを読み込んでください")
             return
 
+        # 選択されたデータを確認
+        selected_keys = [key for key, var in self.checkboxes.items() if var.get()]
+        if not selected_keys:
+            messagebox.showwarning("警告", "表示するデータを選択してください")
+            return
+
         # 設定値を取得
         try:
             bit_precision = int(self.bit_precision_var.get())
@@ -938,30 +955,24 @@ class GraphTab(ttk.Frame):
                                   "auto", None, None,
                                   skip_after_change, skip_first_data, skip_before_change)
 
-        # 選択されたデータの区間平均を取得
-        pos_sections = None
-        neg_sections = None
-        pos_serial = None
-        neg_serial = None
+        # 選択されたデータをシリアル番号ごとにグループ化
+        serial_data = {}  # {serial: {'POS': sections, 'NEG': sections}}
 
-        for key in self.temp_graph_selected_keys:
+        for key in selected_keys:
             serial, pole = key.rsplit('_', 1)
             column_name = f"{serial}_{pole}"
             sections = plotter.extract_section_averages(
                 self.csv_data, serial, pole, column_name, last_minutes=10
             )
-            if pole == "POS":
-                pos_sections = sections
-                pos_serial = serial
-            elif pole == "NEG":
-                neg_sections = sections
-                neg_serial = serial
+            if serial not in serial_data:
+                serial_data[serial] = {'POS': None, 'NEG': None}
+            serial_data[serial][pole] = sections
 
-        # 結果表示ウィンドウを作成
-        self._create_section_averages_window(pos_sections, neg_sections, pos_serial, neg_serial)
+        # 結果表示ウィンドウを作成（タブ形式）
+        self._create_section_averages_window_tabbed(serial_data)
 
-    def _create_section_averages_window(self, pos_sections, neg_sections, pos_serial, neg_serial):
-        """温度係数表示ウィンドウを作成"""
+    def _create_section_averages_window_tabbed(self, serial_data):
+        """温度係数表示ウィンドウを作成（タブ形式）"""
         # 既存のウィンドウがあれば閉じる
         if hasattr(self, 'section_avg_window') and self.section_avg_window:
             try:
@@ -973,7 +984,7 @@ class GraphTab(ttk.Frame):
         # ウィンドウ作成
         self.section_avg_window = tk.Toplevel(self)
         self.section_avg_window.title("温度係数")
-        self.section_avg_window.geometry("750x700")
+        self.section_avg_window.geometry("750x750")
         self.section_avg_window.resizable(True, True)
 
         main_frame = ttk.Frame(self.section_avg_window, padding=10)
@@ -982,36 +993,567 @@ class GraphTab(ttk.Frame):
         # スペック値（内部で使用）
         self.temp_coef_spec_var = tk.StringVar(value="1.9")
 
-        # テーブル表示エリア（スクロール対応）
-        table_frame = ttk.Frame(main_frame)
-        table_frame.pack(fill=tk.BOTH, expand=True)
+        # タブコントロール作成
+        self.temp_coef_notebook = ttk.Notebook(main_frame)
+        self.temp_coef_notebook.pack(fill=tk.BOTH, expand=True)
+        notebook = self.temp_coef_notebook
 
-        # キャンバスとスクロールバー
-        canvas = tk.Canvas(table_frame)
-        v_scrollbar = ttk.Scrollbar(table_frame, orient=tk.VERTICAL, command=canvas.yview)
-        h_scrollbar = ttk.Scrollbar(table_frame, orient=tk.HORIZONTAL, command=canvas.xview)
-        self.temp_coef_table_frame = ttk.Frame(canvas)
+        # 各シリアル番号のデータを保存（PNG保存用）
+        self.temp_coef_serial_data = serial_data
+        self.temp_coef_table_frames = {}
 
-        self.temp_coef_table_frame.bind(
-            "<Configure>",
-            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
-        )
+        # シリアル番号ごとにタブを作成
+        for serial in sorted(serial_data.keys()):
+            data = serial_data[serial]
+            pos_sections = data.get('POS')
+            neg_sections = data.get('NEG')
 
-        canvas.create_window((0, 0), window=self.temp_coef_table_frame, anchor="nw")
-        canvas.configure(yscrollcommand=v_scrollbar.set, xscrollcommand=h_scrollbar.set)
+            # タブフレーム作成
+            tab_frame = ttk.Frame(notebook, padding=5)
+            notebook.add(tab_frame, text=serial)
 
-        v_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-        h_scrollbar.pack(side=tk.BOTTOM, fill=tk.X)
-        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+            # テーブル表示エリア（スクロール対応）
+            table_container = ttk.Frame(tab_frame)
+            table_container.pack(fill=tk.BOTH, expand=True)
 
-        # テーブル作成
-        self._create_temp_coef_table(pos_sections, neg_sections, pos_serial, neg_serial)
+            # キャンバスとスクロールバー
+            canvas = tk.Canvas(table_container, bg='white')
+            v_scrollbar = ttk.Scrollbar(table_container, orient=tk.VERTICAL, command=canvas.yview)
+            h_scrollbar = ttk.Scrollbar(table_container, orient=tk.HORIZONTAL, command=canvas.xview)
+            table_frame = ttk.Frame(canvas)
 
-        # 閉じるボタン
+            table_frame.bind(
+                "<Configure>",
+                lambda e, c=canvas: c.configure(scrollregion=c.bbox("all"))
+            )
+
+            canvas.create_window((0, 0), window=table_frame, anchor="nw")
+            canvas.configure(yscrollcommand=v_scrollbar.set, xscrollcommand=h_scrollbar.set)
+
+            v_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+            h_scrollbar.pack(side=tk.BOTTOM, fill=tk.X)
+            canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+            # テーブル作成
+            self._create_temp_coef_table_in_frame(table_frame, pos_sections, neg_sections, serial)
+
+            # PNG保存用にフレーム、キャンバス、スクロールバーを保存
+            self.temp_coef_table_frames[serial] = {
+                'frame': table_frame,
+                'canvas': canvas,
+                'v_scrollbar': v_scrollbar,
+                'h_scrollbar': h_scrollbar
+            }
+
+        # ボタンフレーム
         btn_frame = ttk.Frame(main_frame)
         btn_frame.pack(fill=tk.X, pady=10)
+        ttk.Button(btn_frame, text="Excel&PNG保存",
+                   command=self._save_temp_coef_tables_png).pack(side=tk.LEFT, padx=5)
         ttk.Button(btn_frame, text="閉じる",
                    command=self.section_avg_window.destroy).pack(side=tk.RIGHT)
+
+    def _create_section_averages_window(self, pos_sections, neg_sections, pos_serial, neg_serial):
+        """温度係数表示ウィンドウを作成（後方互換性のため残す）"""
+        serial_data = {}
+        if pos_serial:
+            if pos_serial not in serial_data:
+                serial_data[pos_serial] = {'POS': None, 'NEG': None}
+            serial_data[pos_serial]['POS'] = pos_sections
+        if neg_serial:
+            if neg_serial not in serial_data:
+                serial_data[neg_serial] = {'POS': None, 'NEG': None}
+            serial_data[neg_serial]['NEG'] = neg_sections
+        self._create_section_averages_window_tabbed(serial_data)
+
+    def _save_temp_coef_tables_png(self):
+        """温度係数テーブルをExcel&PNG保存（複数シリアルは1ファイルに複数シート）"""
+        import os
+
+        try:
+            from openpyxl import Workbook
+            from openpyxl.styles import Font, Alignment, Border, Side, PatternFill
+            from openpyxl.utils import get_column_letter
+            import win32com.client
+            from PIL import Image
+            import io
+        except ImportError as e:
+            messagebox.showerror("エラー",
+                f"必要なライブラリがありません: {e}\n\n"
+                "pip install openpyxl pywin32 pillow")
+            return
+
+        if not hasattr(self, 'temp_coef_serial_data') or not self.temp_coef_serial_data:
+            messagebox.showerror("エラー", "保存するデータがありません")
+            return
+
+        # フォルダ選択ダイアログ
+        folder_path = filedialog.askdirectory(title="保存先フォルダを選択")
+        if not folder_path:
+            return
+
+        # スペック値を取得
+        try:
+            spec_value = float(self.temp_coef_spec_var.get())
+        except ValueError:
+            spec_value = 1.9
+
+        saved_files = []
+        errors = []
+        sheet_info = {}  # {serial: (last_row, last_col)}
+
+        # 1つのワークブックに全シリアルのシートを作成
+        wb = Workbook()
+        wb.remove(wb.active)  # デフォルトシートを削除
+
+        for serial in sorted(self.temp_coef_serial_data.keys()):
+            try:
+                data = self.temp_coef_serial_data[serial]
+                pos_sections = data.get('POS')
+                neg_sections = data.get('NEG')
+
+                # 新しいシートを作成
+                ws = wb.create_sheet(title=serial)
+
+                # テーブルデータをExcelに書き込み
+                last_row, last_col = self._write_excel_table(
+                    ws, pos_sections, neg_sections, serial, spec_value)
+                sheet_info[serial] = (last_row, last_col)
+
+            except Exception as e:
+                errors.append(f"{serial}: {str(e)}")
+
+        # Excelファイルを保存（シリアルNo.をファイル名に含める）
+        serial_names = "_".join(sorted(self.temp_coef_serial_data.keys()))
+        excel_base = f"温度係数_{serial_names}"
+        excel_filename = f"{excel_base}.xlsx"
+        excel_path = os.path.join(folder_path, excel_filename)
+
+        idx = 1
+        while os.path.exists(excel_path):
+            excel_filename = f"{excel_base}_{idx}.xlsx"
+            excel_path = os.path.join(folder_path, excel_filename)
+            idx += 1
+
+        wb.save(excel_path)
+        wb.close()
+        saved_files.append(excel_filename)
+
+        # 各シートをPNGとして保存
+        for serial, (last_row, last_col) in sheet_info.items():
+            try:
+                base_filename = f"温度係数_{serial}"
+                filename = f"{base_filename}.png"
+                filepath = os.path.join(folder_path, filename)
+
+                index = 1
+                while os.path.exists(filepath):
+                    filename = f"{base_filename}_{index}.png"
+                    filepath = os.path.join(folder_path, filename)
+                    index += 1
+
+                # Excel COMでセル範囲を画像として保存
+                self._excel_range_to_png(excel_path, serial, f"A1:{get_column_letter(last_col)}{last_row}", filepath)
+                saved_files.append(filename)
+
+            except Exception as e:
+                errors.append(f"{serial} PNG: {str(e)}")
+
+        # 結果表示
+        if saved_files:
+            msg = "保存しました:\n" + "\n".join(saved_files)
+            if errors:
+                msg += "\n\nエラー:\n" + "\n".join(errors)
+                messagebox.showwarning("一部保存完了", msg)
+            else:
+                messagebox.showinfo("成功", msg)
+        else:
+            messagebox.showerror("エラー", "保存に失敗しました:\n" + "\n".join(errors))
+
+    def _excel_range_to_png(self, excel_path, sheet_name, cell_range, output_path):
+        """ExcelのセルをPNG画像として保存"""
+        import win32com.client
+        import pythoncom
+        from PIL import Image
+        import io
+        import time
+
+        pythoncom.CoInitialize()
+        excel = None
+        wb = None
+        try:
+            # DispatchExで新しいExcelインスタンスを作成（既存のExcelに影響しない）
+            excel = win32com.client.DispatchEx("Excel.Application")
+            excel.Visible = False
+            excel.DisplayAlerts = False
+
+            wb = excel.Workbooks.Open(excel_path)
+            ws = wb.Worksheets(sheet_name)  # 指定シートを選択
+
+            # セル範囲を選択してコピー
+            rng = ws.Range(cell_range)
+            rng.CopyPicture(Format=2)  # xlBitmap = 2
+
+            # クリップボードから画像を取得
+            time.sleep(0.3)
+
+            from PIL import ImageGrab
+            img = ImageGrab.grabclipboard()
+
+            if img:
+                img.save(output_path, 'PNG')
+            else:
+                raise Exception("クリップボードから画像を取得できませんでした")
+
+        finally:
+            if wb:
+                wb.Close(SaveChanges=False)
+            if excel:
+                excel.Quit()
+            pythoncom.CoUninitialize()
+
+    def _write_excel_table(self, ws, pos_sections, neg_sections, serial, spec_value):
+        """Excelシートにテーブルを書き込み"""
+        from openpyxl.styles import Font, Alignment, Border, Side, PatternFill
+        from openpyxl.utils import get_column_letter
+
+        # スタイル定義
+        thin_border = Border(
+            left=Side(style='thin'),
+            right=Side(style='thin'),
+            top=Side(style='thin'),
+            bottom=Side(style='thin')
+        )
+        # 斜線ボーダー（左上から右下）
+        diagonal_border = Border(
+            left=Side(style='thin'),
+            right=Side(style='thin'),
+            top=Side(style='thin'),
+            bottom=Side(style='thin'),
+            diagonal=Side(style='thin'),
+            diagonalDown=True
+        )
+        header_fill = PatternFill(start_color='D0D0D0', end_color='D0D0D0', fill_type='solid')
+        ng_fill = PatternFill(start_color='FFCCCC', end_color='FFCCCC', fill_type='solid')
+        center_align = Alignment(horizontal='center', vertical='center', wrap_text=True)
+        right_align = Alignment(horizontal='right', vertical='center')
+
+        # ヘッダー
+        headers = ['ユニットNo.', '入力コード', '温度\n(℃)', '測定電圧\n(V)', 'ΔT\n(℃)',
+                   'ΔV\n(V)', '温度係数\n(ppm/℃)', 'スペック\n(ppm/℃)', '判定']
+        col_widths = [14, 10, 6, 12, 6, 12, 11, 10, 6]
+
+        for col, (header, width) in enumerate(zip(headers, col_widths), 1):
+            cell = ws.cell(row=1, column=col, value=header)
+            cell.font = Font(bold=True, size=9)
+            cell.fill = header_fill
+            cell.border = thin_border
+            cell.alignment = center_align
+            ws.column_dimensions[get_column_letter(col)].width = width
+
+        # データ行
+        row_idx = 2
+        total_data_rows = 0
+
+        for sections, pole in [(pos_sections, "POS"), (neg_sections, "NEG")]:
+            if not sections:
+                continue
+
+            code_data = self._organize_sections_by_code(sections)
+            unit_name = f"1PB397MK2\nDFH_{serial}\n{pole}"
+            unit_start_row = row_idx
+
+            # フルスケール計算
+            fffff_23 = code_data.get('FFFFF', {}).get(23, {}).get('voltage')
+            zero_23 = code_data.get('00000', {}).get(23, {}).get('voltage')
+            full_scale_23 = (fffff_23 - zero_23) if (fffff_23 is not None and zero_23 is not None) else None
+
+            for code in ['FFFFF', '80000', '00000']:
+                if code not in code_data:
+                    continue
+
+                temps_data = code_data[code]
+                code_start_row = row_idx
+
+                # 温度係数計算
+                tc_28 = dv_28 = tc_18 = dv_18 = None
+                if 28 in temps_data and 23 in temps_data:
+                    dv_28 = temps_data[28]['voltage'] - temps_data[23]['voltage']
+                    if full_scale_23:
+                        tc_28 = (dv_28 / full_scale_23) * 1e6 / 5.0
+
+                if 23 in temps_data and 18 in temps_data:
+                    dv_18 = temps_data[18]['voltage'] - temps_data[23]['voltage']
+                    if full_scale_23:
+                        tc_18 = (dv_18 / full_scale_23) * 1e6 / (-5.0)
+
+                jdg_28 = "OK" if tc_28 is not None and abs(tc_28) <= spec_value else ("NG" if tc_28 is not None else "")
+                jdg_18 = "OK" if tc_18 is not None and abs(tc_18) <= spec_value else ("NG" if tc_18 is not None else "")
+
+                # 6行作成（各温度2行）
+                for temp_idx, temp in enumerate([28, 23, 18]):
+                    voltage = temps_data.get(temp, {}).get('voltage')
+                    temp_start_row = row_idx
+
+                    for sub_row in range(2):
+                        # 温度セル（2行結合、最初のみ）
+                        if sub_row == 0:
+                            ws.cell(row=row_idx, column=3, value=temp).alignment = center_align
+                            ws.cell(row=row_idx, column=3).border = thin_border
+
+                        # 測定電圧（2行結合、最初のみ）
+                        if sub_row == 0 and voltage is not None:
+                            cell = ws.cell(row=row_idx, column=4, value=voltage)
+                            cell.alignment = right_align
+                            cell.number_format = '0.000000'
+                            cell.border = thin_border
+
+                        # ΔT, ΔV, 温度係数, 判定
+                        if temp_idx == 0 and sub_row == 1:  # 28→23
+                            c = ws.cell(row=row_idx, column=5, value=5.0)
+                            c.alignment = center_align
+                            c.number_format = '0.0'
+                            if dv_28 is not None:
+                                c = ws.cell(row=row_idx, column=6, value=dv_28)
+                                c.alignment = right_align
+                                c.number_format = '0.000000'
+                            if tc_28 is not None:
+                                c = ws.cell(row=row_idx, column=7, value=tc_28)
+                                c.alignment = center_align
+                                c.number_format = '0.0'
+                                if jdg_28 == "NG":
+                                    c.fill = ng_fill
+                            c = ws.cell(row=row_idx, column=9, value=jdg_28)
+                            c.alignment = center_align
+                            if jdg_28 == "NG":
+                                c.fill = ng_fill
+                        elif temp_idx == 1 and sub_row == 1:  # 23→18
+                            c = ws.cell(row=row_idx, column=5, value=-5.0)
+                            c.alignment = center_align
+                            c.number_format = '0.0'
+                            if dv_18 is not None:
+                                c = ws.cell(row=row_idx, column=6, value=dv_18)
+                                c.alignment = right_align
+                                c.number_format = '0.000000'
+                            if tc_18 is not None:
+                                c = ws.cell(row=row_idx, column=7, value=tc_18)
+                                c.alignment = center_align
+                                c.number_format = '0.0'
+                                if jdg_18 == "NG":
+                                    c.fill = ng_fill
+                            c = ws.cell(row=row_idx, column=9, value=jdg_18)
+                            c.alignment = center_align
+                            if jdg_18 == "NG":
+                                c.fill = ng_fill
+                        else:
+                            # 空セルに斜線（左上から右下への斜線）
+                            for col in [5, 6, 7, 9]:
+                                cell = ws.cell(row=row_idx, column=col)
+                                cell.border = diagonal_border
+
+                        # 全セルにボーダー適用（斜線セル以外）
+                        diagonal_cols = [5, 6, 7, 9] if not (temp_idx == 0 and sub_row == 1) and not (temp_idx == 1 and sub_row == 1) else []
+                        for col in range(1, 10):
+                            if col not in diagonal_cols:
+                                ws.cell(row=row_idx, column=col).border = thin_border
+
+                        row_idx += 1
+                        total_data_rows += 1
+
+                    # 温度・電圧セルの結合
+                    if temp_start_row < row_idx - 1:
+                        ws.merge_cells(start_row=temp_start_row, start_column=3,
+                                      end_row=row_idx - 1, end_column=3)
+                        ws.merge_cells(start_row=temp_start_row, start_column=4,
+                                      end_row=row_idx - 1, end_column=4)
+
+                # 入力コードセル結合（6行）
+                ws.cell(row=code_start_row, column=2, value=f"{code} H").alignment = center_align
+                if code_start_row < row_idx - 1:
+                    ws.merge_cells(start_row=code_start_row, start_column=2,
+                                  end_row=row_idx - 1, end_column=2)
+
+                # ΔT/ΔV/温度係数/判定の結合（28→23: row 2-3, 23→18: row 4-5）
+                for merge_row, cols in [
+                    (code_start_row + 1, [5, 6, 7, 9]),  # 28→23
+                    (code_start_row + 3, [5, 6, 7, 9])   # 23→18
+                ]:
+                    for col in cols:
+                        ws.merge_cells(start_row=merge_row, start_column=col,
+                                      end_row=merge_row + 1, end_column=col)
+
+            # ユニットNo.セル結合（18行）
+            ws.cell(row=unit_start_row, column=1, value=unit_name).alignment = center_align
+            if unit_start_row < row_idx - 1:
+                ws.merge_cells(start_row=unit_start_row, start_column=1,
+                              end_row=row_idx - 1, end_column=1)
+
+        # スペックセル結合（全データ行）
+        if total_data_rows > 0:
+            c = ws.cell(row=2, column=8, value=spec_value)
+            c.alignment = center_align
+            c.number_format = '0.0'
+            ws.merge_cells(start_row=2, start_column=8, end_row=row_idx - 1, end_column=8)
+
+        # 行の高さ設定
+        ws.row_dimensions[1].height = 28  # ヘッダー行
+        for r in range(2, row_idx):
+            ws.row_dimensions[r].height = 15
+
+        return row_idx - 1, 9  # 最終行、最終列
+
+    def _generate_html_table(self, pos_sections, neg_sections, serial, spec_value):
+        """PNG保存用のHTMLテーブルを生成"""
+
+        # CSSスタイル
+        css = """
+        <style>
+            body { font-family: 'MS Gothic', 'Yu Gothic', 'Meiryo', sans-serif; margin: 5px; background: white; }
+            table { border-collapse: collapse; font-size: 10px; }
+            th, td { border: 1px solid #888; padding: 1px 3px; text-align: center; vertical-align: middle; }
+            th { background-color: #D0D0D0; font-weight: bold; white-space: pre-line; }
+            td { background-color: white; }
+            .diagonal { background: linear-gradient(to bottom right, white 49%, #888 50%, white 51%); }
+            .ng { background-color: #FFCCCC !important; }
+            .right { text-align: right; }
+            .unit-cell { white-space: pre-line; line-height: 1.2; }
+        </style>
+        """
+
+        # 全データを収集
+        all_rows = []  # [(unit_name, code, temp, voltage, dt, dv, tc, spec, judgment, tc_bg, jdg_bg), ...]
+
+        for sections, pole in [(pos_sections, "POS"), (neg_sections, "NEG")]:
+            if not sections:
+                continue
+
+            code_data = self._organize_sections_by_code(sections)
+            unit_name = f"1PB397MK2\nDFH_{serial}\n{pole}"
+
+            # 23℃のフルスケール電圧範囲
+            fffff_23 = code_data.get('FFFFF', {}).get(23, {}).get('voltage')
+            zero_23 = code_data.get('00000', {}).get(23, {}).get('voltage')
+            full_scale_23 = (fffff_23 - zero_23) if (fffff_23 is not None and zero_23 is not None) else None
+
+            for code in ['FFFFF', '80000', '00000']:
+                if code not in code_data:
+                    continue
+
+                temps_data = code_data[code]
+
+                # 温度係数計算
+                tc_28 = dv_28 = tc_18 = dv_18 = None
+                if 28 in temps_data and 23 in temps_data:
+                    dv_28 = temps_data[28]['voltage'] - temps_data[23]['voltage']
+                    if full_scale_23:
+                        tc_28 = (dv_28 / full_scale_23) * 1e6 / 5.0
+
+                if 23 in temps_data and 18 in temps_data:
+                    dv_18 = temps_data[18]['voltage'] - temps_data[23]['voltage']
+                    if full_scale_23:
+                        tc_18 = (dv_18 / full_scale_23) * 1e6 / (-5.0)
+
+                jdg_28 = "OK" if tc_28 is not None and abs(tc_28) <= spec_value else ("NG" if tc_28 is not None else "")
+                jdg_18 = "OK" if tc_18 is not None and abs(tc_18) <= spec_value else ("NG" if tc_18 is not None else "")
+                ng_28 = jdg_28 == "NG"
+                ng_18 = jdg_18 == "NG"
+
+                # 6行生成（各温度2行）
+                for temp in [28, 23, 18]:
+                    v = temps_data.get(temp, {}).get('voltage')
+                    v_str = f"{v:.6f}" if v is not None else ""
+
+                    if temp == 28:
+                        # 行1: 斜線
+                        all_rows.append((unit_name, code, temp, v_str, "／", "／", "／", spec_value, "／", False, False))
+                        # 行2: 28→23計算結果
+                        all_rows.append((None, None, None, None,
+                                        "5.0", f"{dv_28:.6f}" if dv_28 else "", f"{tc_28:.1f}" if tc_28 else "",
+                                        None, jdg_28, ng_28, ng_28))
+                    elif temp == 23:
+                        # 行3: 23℃データ (28→23の計算結果と同じ行に含まれる想定だが、2行構造なので分離)
+                        all_rows.append((None, None, temp, v_str, None, None, None, None, None, False, False))
+                        # 行4: 23→18計算結果
+                        all_rows.append((None, None, None, None,
+                                        "-5.0", f"{dv_18:.6f}" if dv_18 else "", f"{tc_18:.1f}" if tc_18 else "",
+                                        None, jdg_18, ng_18, ng_18))
+                    else:  # 18
+                        # 行5: 18℃データ
+                        all_rows.append((None, None, temp, v_str, None, None, None, None, None, False, False))
+                        # 行6: 斜線
+                        all_rows.append((None, None, None, None, "／", "／", "／", None, "／", False, False))
+
+        # HTMLテーブル生成（シンプルな行ごと出力）
+        html = f"""<!DOCTYPE html><html><head><meta charset="utf-8">{css}</head><body><table>
+        <tr><th>ユニットNo.</th><th>入力<br>コード</th><th>温度<br>(℃)</th><th>測定電圧<br>(V)</th>
+        <th>ΔT<br>(℃)</th><th>ΔV<br>(V)</th><th>温度係数<br>(ppm/℃)</th><th>スペック<br>(ppm/℃)</th><th>判定</th></tr>"""
+
+        row_idx = 0
+        current_unit = None
+        current_code = None
+        unit_start = 0
+        code_start = 0
+
+        # まずシンプルに全行出力
+        for i, row in enumerate(all_rows):
+            unit, code, temp, volt, dt, dv, tc, spec, jdg, tc_ng, jdg_ng = row
+
+            html += "<tr>"
+
+            # ユニットNo.
+            if unit is not None:
+                # 18行結合（POS/NEG各18行）
+                rowspan = 18
+                html += f'<td rowspan="{rowspan}" class="unit-cell">{unit.replace(chr(10), "<br>")}</td>'
+
+            # 入力コード
+            if code is not None:
+                html += f'<td rowspan="6">{code} H</td>'
+
+            # 温度
+            if temp is not None:
+                html += f'<td rowspan="2">{temp}</td>'
+
+            # 測定電圧
+            if volt is not None:
+                html += f'<td rowspan="2" class="right">{volt}</td>'
+
+            # ΔT
+            if dt == "／":
+                html += '<td class="diagonal"></td>'
+            elif dt is not None:
+                html += f'<td rowspan="2">{dt}</td>'
+
+            # ΔV
+            if dv == "／":
+                html += '<td class="diagonal"></td>'
+            elif dv is not None:
+                html += f'<td rowspan="2" class="right">{dv}</td>'
+
+            # 温度係数
+            if tc == "／":
+                html += '<td class="diagonal"></td>'
+            elif tc is not None:
+                cls = ' class="ng"' if tc_ng else ''
+                html += f'<td rowspan="2"{cls}>{tc}</td>'
+
+            # スペック
+            if spec == "／":
+                html += '<td class="diagonal"></td>'
+            elif spec is not None:
+                html += f'<td rowspan="18">{spec:.1f}</td>'
+
+            # 判定
+            if jdg == "／":
+                html += '<td class="diagonal"></td>'
+            elif jdg is not None:
+                cls = ' class="ng"' if jdg_ng else ''
+                html += f'<td rowspan="2"{cls}>{jdg}</td>'
+
+            html += "</tr>"
+
+        html += "</table></body></html>"
+        return html
 
     def _create_temp_coef_table(self, pos_sections, neg_sections, pos_serial, neg_serial):
         """温度係数テーブルを作成（添付画像形式）"""
@@ -1165,6 +1707,146 @@ class GraphTab(ttk.Frame):
 
         # スペックのセル結合（POS/NEG全体で共通）
         total_data_rows = row_idx - 1  # ヘッダー行を除いた全データ行数
+        if total_data_rows > 0:
+            tk.Label(parent, text=f"{spec_value:.1f}", relief=tk.RIDGE, width=header_widths[7],
+                    font=('', 9), anchor='center', bg='white').grid(row=1, column=7, rowspan=total_data_rows, sticky='nsew')
+
+    def _create_temp_coef_table_in_frame(self, parent, pos_sections, neg_sections, serial):
+        """温度係数テーブルを指定フレームに作成（タブ用）"""
+        # スペック値を取得
+        try:
+            spec_value = float(self.temp_coef_spec_var.get())
+        except ValueError:
+            spec_value = 1.9
+
+        # ヘッダー行
+        headers = ['ユニットNo.', '入力コード', '温度\n(℃)', '測定電圧\n(V)', 'ΔT\n(℃)', 'ΔV\n(V)',
+                   '温度係数\n(ppm/℃)', 'スペック\n(ppm/℃)', '判定']
+        header_widths = [10, 7, 4, 10, 4, 10, 9, 7, 4]
+
+        for col, (header, width) in enumerate(zip(headers, header_widths)):
+            label = tk.Label(parent, text=header, relief=tk.RIDGE, width=width,
+                           bg='#D0D0D0', font=('', 9))
+            label.grid(row=0, column=col, sticky='nsew', padx=0, pady=0)
+
+        # 斜線セル作成用ヘルパー関数
+        def create_diagonal_cell(row, col, width, rowspan=1):
+            """斜線付きの空セルを作成（左上から右下への対角線）"""
+            cell_width = width * 8
+            cell_height = 15 * rowspan
+            canvas = tk.Canvas(parent, width=cell_width, height=cell_height,
+                             bg='white', highlightthickness=1, highlightbackground='gray')
+            canvas.grid(row=row, column=col, rowspan=rowspan, sticky='nsew')
+            canvas.create_line(0, 0, cell_width, cell_height, fill='gray')
+
+        # データ行を作成
+        row_idx = 1
+        row_min_height = 15
+
+        # POS/NEGそれぞれ処理
+        for pole_idx, (sections, pole) in enumerate([(pos_sections, "POS"), (neg_sections, "NEG")]):
+            if not sections:
+                continue
+
+            code_data = self._organize_sections_by_code(sections)
+            unit_name = f"1PB397MK2\nDFH_{serial}\n{pole}"
+            unit_row_start = row_idx
+
+            # 23℃のフルスケール電圧範囲を計算
+            fffff_23 = code_data.get('FFFFF', {}).get(23, {}).get('voltage')
+            zero_23 = code_data.get('00000', {}).get(23, {}).get('voltage')
+            full_scale_23 = (fffff_23 - zero_23) if (fffff_23 is not None and zero_23 is not None) else None
+
+            for code_idx, code in enumerate(['FFFFF', '80000', '00000']):
+                if code not in code_data:
+                    continue
+
+                temps_data = code_data[code]
+                code_row_start = row_idx
+                temp_order = [28, 23, 18]
+                rows_per_temp = 2
+
+                for temp_idx, temp in enumerate(temp_order):
+                    if temp not in temps_data:
+                        continue
+
+                    voltage = temps_data[temp]['voltage']
+                    temp_row = code_row_start + temp_idx * rows_per_temp
+
+                    tk.Label(parent, text=str(temp), relief=tk.RIDGE,
+                            width=header_widths[2], font=('', 9), anchor='center', bg='white'
+                            ).grid(row=temp_row, column=2, rowspan=rows_per_temp, sticky='nsew')
+
+                    tk.Label(parent, text=f"{voltage:.6f}" if voltage else "",
+                            relief=tk.RIDGE, width=header_widths[3],
+                            font=('', 9), anchor='e', bg='white'
+                            ).grid(row=temp_row, column=3, rowspan=rows_per_temp, sticky='nsew')
+
+                row_idx = code_row_start + len(temp_order) * rows_per_temp
+
+                # ΔT以降のセル - 28→23の計算
+                if 28 in temps_data and 23 in temps_data:
+                    v28 = temps_data[28]['voltage']
+                    v23 = temps_data[23]['voltage']
+                    delta_t_28 = 5.0
+                    delta_v_28 = v28 - v23
+                    temp_coef_28 = (delta_v_28 / full_scale_23) * 1e6 / delta_t_28 if full_scale_23 else 0
+                    judgment_28 = "OK" if abs(temp_coef_28) <= spec_value else "NG"
+                    bg_28 = '#FFCCCC' if judgment_28 == "NG" else 'white'
+
+                    delta_row = code_row_start + 1
+                    tk.Label(parent, text=f"{delta_t_28:.1f}", relief=tk.RIDGE, width=header_widths[4],
+                            font=('', 9), anchor='e', bg='white').grid(row=delta_row, column=4, rowspan=2, sticky='nsew')
+                    tk.Label(parent, text=f"{delta_v_28:.6f}", relief=tk.RIDGE, width=header_widths[5],
+                            font=('', 9), anchor='e', bg='white').grid(row=delta_row, column=5, rowspan=2, sticky='nsew')
+                    tk.Label(parent, text=f"{temp_coef_28:.1f}", relief=tk.RIDGE, width=header_widths[6],
+                            font=('', 9), anchor='e', bg=bg_28).grid(row=delta_row, column=6, rowspan=2, sticky='nsew')
+                    tk.Label(parent, text=judgment_28, relief=tk.RIDGE, width=header_widths[8],
+                            font=('', 9), anchor='center', bg=bg_28).grid(row=delta_row, column=8, rowspan=2, sticky='nsew')
+
+                # ΔT以降のセル - 23→18の計算
+                if 23 in temps_data and 18 in temps_data:
+                    v23 = temps_data[23]['voltage']
+                    v18 = temps_data[18]['voltage']
+                    delta_t_18 = -5.0
+                    delta_v_18 = v18 - v23
+                    temp_coef_18 = (delta_v_18 / full_scale_23) * 1e6 / delta_t_18 if full_scale_23 else 0
+                    judgment_18 = "OK" if abs(temp_coef_18) <= spec_value else "NG"
+                    bg_18 = '#FFCCCC' if judgment_18 == "NG" else 'white'
+
+                    delta_row = code_row_start + 3
+                    tk.Label(parent, text=f"{delta_t_18:.1f}", relief=tk.RIDGE, width=header_widths[4],
+                            font=('', 9), anchor='e', bg='white').grid(row=delta_row, column=4, rowspan=2, sticky='nsew')
+                    tk.Label(parent, text=f"{delta_v_18:.6f}", relief=tk.RIDGE, width=header_widths[5],
+                            font=('', 9), anchor='e', bg='white').grid(row=delta_row, column=5, rowspan=2, sticky='nsew')
+                    tk.Label(parent, text=f"{temp_coef_18:.1f}", relief=tk.RIDGE, width=header_widths[6],
+                            font=('', 9), anchor='e', bg=bg_18).grid(row=delta_row, column=6, rowspan=2, sticky='nsew')
+                    tk.Label(parent, text=judgment_18, relief=tk.RIDGE, width=header_widths[8],
+                            font=('', 9), anchor='center', bg=bg_18).grid(row=delta_row, column=8, rowspan=2, sticky='nsew')
+
+                # 空セル（ΔT列の上端と下端）- 斜線付き
+                for col in [4, 5, 6, 8]:
+                    create_diagonal_cell(code_row_start, col, header_widths[col])
+                    create_diagonal_cell(code_row_start + 5, col, header_widths[col])
+
+                # 入力コードのセル結合（縦6行）
+                tk.Label(parent, text=f"{code} H", relief=tk.RIDGE, width=header_widths[1],
+                        font=('', 9), bg='white').grid(row=code_row_start, column=1, rowspan=6, sticky='nsew')
+
+                # 各行の高さを均一に設定
+                for r in range(6):
+                    parent.grid_rowconfigure(code_row_start + r, minsize=row_min_height)
+
+            # 各コード6行 × 3コード = 18行
+            total_rows = 6 * 3
+            row_idx = unit_row_start + total_rows
+
+            # ユニットNo.のセル結合（縦）
+            tk.Label(parent, text=unit_name, relief=tk.RIDGE, width=header_widths[0],
+                    font=('', 9), bg='white').grid(row=unit_row_start, column=0, rowspan=total_rows, sticky='nsew')
+
+        # スペックのセル結合（POS/NEG全体で共通）
+        total_data_rows = row_idx - 1
         if total_data_rows > 0:
             tk.Label(parent, text=f"{spec_value:.1f}", relief=tk.RIDGE, width=header_widths[7],
                     font=('', 9), anchor='center', bg='white').grid(row=1, column=7, rowspan=total_data_rows, sticky='nsew')

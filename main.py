@@ -171,6 +171,9 @@ class MainApplication(tk.Tk):
         # シリアル通信を切断
         if self.serial_manager.is_connected():
             self.serial_manager.disconnect()
+        # Matplotlibのグラフウィンドウを全て閉じる
+        import matplotlib.pyplot as plt
+        plt.close('all')
         self.destroy()
 
 if __name__ == "__main__":
