@@ -430,7 +430,8 @@ class MeasurementWindow(tk.Toplevel):
             'success': False,
             'channel_addr': channel_addr,
             'error': None,
-            'detail': []  # 詳細ログ用
+            'detail': [],  # 詳細ログ用
+            'timing': {}   # コマンド別タイミング
         }
 
         try:
@@ -442,9 +443,14 @@ class MeasurementWindow(tk.Toplevel):
                 try:
                     # 【単一選択】前回CLOSEしたチャンネルをOPEN（複数CLOSE防止）
                     if self.last_closed_channel is not None:
+                        # OPENコマンドの時間計測
+                        open_start = time.time()
                         open_success, _ = self.gpib_scanner.write(f"OPEN ({self.last_closed_channel})")
+                        open_elapsed = time.time() - open_start
+                        result['timing']['open'] = open_elapsed
+
                         wait_time = switch_delay / 2
-                        result['detail'].append(f"OPEN ({self.last_closed_channel}) → 待機 {wait_time:.2f}秒")
+                        result['detail'].append(f"OPEN ({self.last_closed_channel}): {open_elapsed:.3f}秒 → 待機 {wait_time:.2f}秒")
                         time.sleep(wait_time)
 
                         # OPENが失敗した場合、CLOSEを実行しない（複数チャンネルCLOSE防止）
@@ -454,8 +460,13 @@ class MeasurementWindow(tk.Toplevel):
                             return
 
                     # 【単一選択】新しいチャンネルをCLOSE（常に1つだけ）
+                    # CLOSEコマンドの時間計測
+                    close_start = time.time()
                     success, _ = self.gpib_scanner.write(f"CLOSE ({channel_addr})")
-                    result['detail'].append(f"CLOSE ({channel_addr})")
+                    close_elapsed = time.time() - close_start
+                    result['timing']['close'] = close_elapsed
+
+                    result['detail'].append(f"CLOSE ({channel_addr}): {close_elapsed:.3f}秒")
                     if success:
                         result['success'] = True
                     else:
@@ -500,7 +511,11 @@ class MeasurementWindow(tk.Toplevel):
 
                 # 詳細モードの場合、スキャナー切替時間を表示
                 if self.detail_mode_var.get():
-                    self.log(f"  スキャナー切替時間: {scanner_elapsed:.3f}秒", "INFO")
+                    timing = result.get('timing', {})
+                    open_time = timing.get('open', 0)
+                    close_time = timing.get('close', 0)
+                    gpib_total = open_time + close_time
+                    self.log(f"  スキャナー切替時間: {scanner_elapsed:.3f}秒 (GPIB: OPEN={open_time:.3f}秒 + CLOSE={close_time:.3f}秒 = {gpib_total:.3f}秒)", "INFO")
 
                 # スキャナー切替時間の1/2: CLOSE後、DMM計測開始までの待ち時間
                 delay_ms = int(self.switch_delay_sec.get() / 2 * 1000)
@@ -538,7 +553,8 @@ class MeasurementWindow(tk.Toplevel):
         result = {
             'success': False,
             'response': None,
-            'error': None
+            'error': None,
+            'timing': {}  # コマンド別タイミング
         }
 
         try:
@@ -547,8 +563,12 @@ class MeasurementWindow(tk.Toplevel):
                 self.gpib_dmm.instrument.timeout = 3000
 
                 try:
-                    # query()を使用してwrite+readを1回の通信にまとめる（高速化）
+                    # TRIG SGLコマンドの時間計測
+                    trig_start = time.time()
                     success, response = self.gpib_dmm.query("TRIG SGL")
+                    trig_elapsed = time.time() - trig_start
+                    result['timing']['trig_sgl'] = trig_elapsed
+
                     if success:
                         result['success'] = True
                         result['response'] = response
@@ -585,7 +605,8 @@ class MeasurementWindow(tk.Toplevel):
 
                 # 詳細モードの場合、DMM計測時間を表示
                 if self.detail_mode_var.get():
-                    self.log(f"  DMM計測時間: {dmm_elapsed:.3f}秒", "INFO")
+                    trig_time = result.get('timing', {}).get('trig_sgl', 0)
+                    self.log(f"  TRIG SGL: {trig_time:.3f}秒 (DMM計測全体: {dmm_elapsed:.3f}秒)", "INFO")
 
                 # ★★★ CSV保存中なら測定値を記録（全データ保存） ★★★
                 if self.is_csv_logging and self.csv_logger:
@@ -1063,8 +1084,9 @@ class MeasurementWindow(tk.Toplevel):
     def _update_estimate(self):
         """測定間隔目安を更新
 
-        計算式: (スキャナー切替時間 + NPLC時間) × 選択ch数
+        計算式: (スキャナー切替時間 + NPLC時間 + オーバーヘッド) × 選択ch数
         NPLC時間 = NPLC値 / 電源周波数(50Hz) ≒ NPLC × 0.02秒
+        オーバーヘッド = 約0.36秒/ch (実測ベース)
         """
         try:
             switch_delay = self.switch_delay_sec.get()
@@ -1080,8 +1102,14 @@ class MeasurementWindow(tk.Toplevel):
                 except ValueError:
                     pass
 
+            # オーバーヘッド: 1チャンネルあたり約0.33秒（実測ベース）
+            # - スキャナーGPIB (OPEN + CLOSE): 約0.005秒（無視できる）
+            # - DMMオーバーヘッド: 約0.23秒（TRIG SGL - NPLC時間）
+            # - その他（スレッド・after・ログ・UI更新）: 約0.10秒
+            overhead = 0.33
+
             # 1チャンネルあたりの時間
-            per_ch_time = switch_delay + nplc_time
+            per_ch_time = switch_delay + nplc_time + overhead
 
             # 選択ch数をカウント（Pos/Negで2倍）
             ch_count = 0
@@ -1097,9 +1125,12 @@ class MeasurementWindow(tk.Toplevel):
 
             if ch_count > 0:
                 total_time = per_ch_time * ch_count
-                self.estimate_label.config(text=f"{total_time:.1f}秒/周 ({per_ch_time:.2f}秒/ch × {ch_count}ch)")
+                # 内訳: 切替時間 + NPLC時間 + オーバーヘッド = 1chあたり時間
+                detail = f"切替{switch_delay:.1f} + NPLC{nplc_time:.1f} + OH{overhead:.1f} = {per_ch_time:.1f}秒/ch"
+                self.estimate_label.config(text=f"{total_time:.1f}秒/周 ({detail} × {ch_count}ch)")
             else:
-                self.estimate_label.config(text=f"{per_ch_time:.2f}秒/ch (DEF未選択)")
+                detail = f"切替{switch_delay:.1f} + NPLC{nplc_time:.1f} + OH{overhead:.1f} = {per_ch_time:.1f}秒/ch"
+                self.estimate_label.config(text=f"{detail} (DEF未選択)")
 
         except Exception:
             self.estimate_label.config(text="---")
@@ -1169,7 +1200,17 @@ class MeasurementWindow(tk.Toplevel):
         return nplc_time
 
     def _get_measurement_interval_seconds(self):
-        """測定間隔目安を秒単位で取得"""
+        """測定間隔目安を秒単位で取得
+
+        計算式:
+        1周回の時間 = (スキャナー切替時間 + NPLC時間 + オーバーヘッド) × チャンネル数
+
+        オーバーヘッド（実測ベース）:
+        - スキャナーGPIB (OPEN + CLOSE): 約0.005秒（無視できる）
+        - DMMオーバーヘッド: 約0.23秒
+        - その他（スレッド・after・ログ・UI更新）: 約0.10秒
+        - 合計約0.33秒/チャンネル
+        """
         try:
             selected_defs = self.get_selected_defs()
             total_channels = 0
@@ -1185,8 +1226,14 @@ class MeasurementWindow(tk.Toplevel):
             switch_delay = self.switch_delay_sec.get()
             nplc_time = self._get_nplc_time()
 
-            # 1周回の時間 = (スキャナー切替時間 + NPLC時間) × チャンネル数
-            interval = (switch_delay + nplc_time) * total_channels
+            # オーバーヘッド: 1チャンネルあたり約0.33秒（実測ベース）
+            # - スキャナーGPIB (OPEN + CLOSE): 約0.005秒（無視できる）
+            # - DMMオーバーヘッド: 約0.23秒（TRIG SGL - NPLC時間）
+            # - その他（スレッド・after・ログ・UI更新）: 約0.10秒
+            overhead_per_channel = 0.33
+
+            # 1周回の時間 = (スキャナー切替時間 + NPLC時間 + オーバーヘッド) × チャンネル数
+            interval = (switch_delay + nplc_time + overhead_per_channel) * total_channels
             return interval
         except Exception:
             return 0
