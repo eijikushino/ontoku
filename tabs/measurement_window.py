@@ -54,6 +54,13 @@ class MeasurementWindow(tk.Toplevel):
         self.sync_with_pattern_var = tk.BooleanVar(value=self._load_sync_option())
         self.last_pattern_running_state = False  # パターン実行状態の前回値
 
+        # ★★★ パターン切替前の待機状態管理 ★★★
+        self.is_waiting_for_pattern_change = False  # パターン切替待機中フラグ
+        self.waiting_pattern_index = -1  # 待機開始時のパターンインデックス
+        self.waiting_selected_defs = None  # 待機中の選択DEF
+        self.waiting_def_index = 0  # 待機中のDEFインデックス
+        self.waiting_pole = "Pos"  # 待機中の極性
+
         # ★★★ スレッド化用: 結果キューとロック（スキャナーとDMMで分離）★★★
         self.scanner_queue = queue.Queue()
         self.dmm_queue = queue.Queue()
@@ -332,27 +339,39 @@ class MeasurementWindow(tk.Toplevel):
         self.start_button.config(state=tk.NORMAL)
         self.stop_button.config(state=tk.DISABLED)
 
+        # ★★★ パターン切替待機中なら解除 ★★★
+        if self.is_waiting_for_pattern_change:
+            self._end_waiting_for_pattern_change()
+
         # ★★★ CSV保存中なら自動停止 ★★★
         if self.is_csv_logging:
             self.stop_csv_logging(show_dialog=False)
         else:
             # CSV保存していない場合もDEF選択を有効化
             self._lock_def_checkboxes(False)
-        
+
         # ★★★ CSV保存ボタンを無効化 ★★★
         self.csv_start_button.config(state=tk.DISABLED)
-        
+
         # ★★★ 停止時に全チャンネルをOPEN ★★★
         self.open_all_used_channels()
     
     def do_one_measurement(self, selected_defs, def_index, pole):
         """1回の計測実行"""
-        
+
         if not self.is_measuring:
             return
-        
+
         if def_index >= len(selected_defs):
-            self.log("=== 1周完了 ===", "INFO")
+            self.log(f"=== 1周完了 === (CSV保存中: {self.is_csv_logging})", "INFO")
+
+            # ★★★ パターン切替前の待機チェック（CSV保存中のみ） ★★★
+            if self.is_csv_logging:
+                should_wait = self._should_wait_for_pattern_change()
+                if should_wait:
+                    self._start_waiting_for_pattern_change(selected_defs)
+                    return
+
             self.do_one_measurement(selected_defs, 0, "Pos")
             return
         
@@ -380,8 +399,13 @@ class MeasurementWindow(tk.Toplevel):
     
     def execute_measurement(self, selected_defs, def_index, pole, def_info, channel):
         """計測実行（非同期版）- スキャナー切替を別スレッドで実行"""
+        import time as time_module
+
         ch_number = channel.replace("CH", "")
         channel_addr = f"@{self.scanner_slot}{ch_number}"
+
+        # スキャナー切替開始時刻を記録
+        self._scanner_start_time = time_module.time()
 
         # 別スレッドでスキャナー切り替えを実行
         thread = threading.Thread(
@@ -450,11 +474,18 @@ class MeasurementWindow(tk.Toplevel):
         - 成功時: last_closed_channelを更新（次回OPEN対象として記憶）
         - 失敗時: 計測停止（不整合な状態を防ぐ）
         """
+        import time as time_module
+
         if not self.is_measuring:
             return
 
         try:
             result = self.scanner_queue.get_nowait()
+
+            # スキャナー切替時間を計算
+            scanner_elapsed = 0
+            if hasattr(self, '_scanner_start_time'):
+                scanner_elapsed = time_module.time() - self._scanner_start_time
 
             if result['success']:
                 # 【単一選択】今回CLOSEしたチャンネルを記憶（次回の切替時にOPENする対象）
@@ -466,6 +497,10 @@ class MeasurementWindow(tk.Toplevel):
                         self.log(f"  {detail}", "INFO")
 
                 self.log(f"スキャナー切替OK: {def_info['name']} {pole}", "SUCCESS")
+
+                # 詳細モードの場合、スキャナー切替時間を表示
+                if self.detail_mode_var.get():
+                    self.log(f"  スキャナー切替時間: {scanner_elapsed:.3f}秒", "INFO")
 
                 # スキャナー切替時間の1/2: CLOSE後、DMM計測開始までの待ち時間
                 delay_ms = int(self.switch_delay_sec.get() / 2 * 1000)
@@ -482,6 +517,10 @@ class MeasurementWindow(tk.Toplevel):
     
     def do_dmm_measurement(self, selected_defs, def_index, pole, def_info):
         """DMM計測（非同期版）- 別スレッドで実行してUIをブロックしない"""
+        import time as time_module
+
+        # 計測開始時刻を記録
+        self._dmm_start_time = time_module.time()
 
         # 別スレッドで測定を実行
         thread = threading.Thread(
@@ -508,16 +547,13 @@ class MeasurementWindow(tk.Toplevel):
                 self.gpib_dmm.instrument.timeout = 3000
 
                 try:
-                    success, _ = self.gpib_dmm.write("TRIG SGL")
+                    # query()を使用してwrite+readを1回の通信にまとめる（高速化）
+                    success, response = self.gpib_dmm.query("TRIG SGL")
                     if success:
-                        success, response = self.gpib_dmm.read()
-                        if success:
-                            result['success'] = True
-                            result['response'] = response
-                        else:
-                            result['error'] = 'read_failed'
+                        result['success'] = True
+                        result['response'] = response
                     else:
-                        result['error'] = 'write_failed'
+                        result['error'] = 'query_failed'
                 finally:
                     self.gpib_dmm.instrument.timeout = orig_timeout
         except Exception as e:
@@ -527,11 +563,18 @@ class MeasurementWindow(tk.Toplevel):
 
     def _check_dmm_result(self, selected_defs, def_index, pole, def_info):
         """DMM測定結果をチェック・UI更新"""
+        import time as time_module
+
         if not self.is_measuring:
             return
 
         try:
             result = self.dmm_queue.get_nowait()
+
+            # DMM計測時間を計算
+            dmm_elapsed = 0
+            if hasattr(self, '_dmm_start_time'):
+                dmm_elapsed = time_module.time() - self._dmm_start_time
 
             if result['success']:
                 value = result['response'].strip()
@@ -539,6 +582,10 @@ class MeasurementWindow(tk.Toplevel):
                 self.measurement_count += 1
                 self.count_label.config(text=f"計測回数: {self.measurement_count}")
                 self.log(f"計測OK ({self.measurement_count}): {def_info['name']} {pole} = {value} V", "SUCCESS")
+
+                # 詳細モードの場合、DMM計測時間を表示
+                if self.detail_mode_var.get():
+                    self.log(f"  DMM計測時間: {dmm_elapsed:.3f}秒", "INFO")
 
                 # ★★★ CSV保存中なら測定値を記録（全データ保存） ★★★
                 if self.is_csv_logging and self.csv_logger:
@@ -561,10 +608,10 @@ class MeasurementWindow(tk.Toplevel):
                     )
             else:
                 error_msg = result.get('error', 'unknown')
-                if error_msg == 'write_failed':
+                if error_msg == 'query_failed':
                     self.log("TRIG SGL失敗", "ERROR")
                 else:
-                    self.log("計測失敗", "ERROR")
+                    self.log(f"計測失敗: {error_msg}", "ERROR")
 
             # 次の測定へ
             next_idx, next_pole = self.get_next(def_index, pole, len(selected_defs))
@@ -1106,3 +1153,122 @@ class MeasurementWindow(tk.Toplevel):
             self.log("パターン実行と保存の同期を有効化", "INFO")
         else:
             self.log("パターン実行と保存の同期を無効化", "INFO")
+
+    # ★★★ パターン切替前の待機機能 ★★★
+    def _get_nplc_time(self):
+        """NPLC時間を秒単位で取得"""
+        nplc_time = 0.0
+        if self.dmm_nplc not in ("---", "Error", ""):
+            try:
+                # 「100 PLC」形式から数値部分を抽出
+                nplc_str = self.dmm_nplc.replace("PLC", "").strip()
+                nplc_val = float(nplc_str)
+                nplc_time = nplc_val * 0.02  # 50Hz基準
+            except ValueError:
+                pass
+        return nplc_time
+
+    def _get_measurement_interval_seconds(self):
+        """測定間隔目安を秒単位で取得"""
+        try:
+            selected_defs = self.get_selected_defs()
+            total_channels = 0
+            for def_info in selected_defs:
+                if def_info['pos_channel'] and def_info['pos_channel'] != "ー":
+                    total_channels += 1
+                if def_info['neg_channel'] and def_info['neg_channel'] != "ー":
+                    total_channels += 1
+
+            if total_channels == 0:
+                return 0
+
+            switch_delay = self.switch_delay_sec.get()
+            nplc_time = self._get_nplc_time()
+
+            # 1周回の時間 = (スキャナー切替時間 + NPLC時間) × チャンネル数
+            interval = (switch_delay + nplc_time) * total_channels
+            return interval
+        except Exception:
+            return 0
+
+    def _should_wait_for_pattern_change(self):
+        """パターン切替前に待機すべきかどうかを判定
+
+        Returns:
+            bool: 待機すべき場合はTrue
+        """
+        # パターン実行中でない場合は待機不要
+        if not self.test_tab.is_running:
+            self.log("待機判定: パターン実行中でない", "INFO")
+            return False
+
+        # パターンの残り時間を取得
+        remaining = self.test_tab.get_pattern_remaining_seconds()
+        if remaining is None:
+            self.log("待機判定: 残り時間取得不可", "INFO")
+            return False
+
+        # 測定間隔を取得
+        interval = self._get_measurement_interval_seconds()
+        if interval <= 0:
+            self.log(f"待機判定: 測定間隔が0以下 ({interval})", "INFO")
+            return False
+
+        # 残り時間が測定間隔より短い場合は待機
+        self.log(f"待機判定: 残り{remaining:.1f}秒 vs 測定間隔{interval:.1f}秒", "INFO")
+        return remaining < interval
+
+    def _start_waiting_for_pattern_change(self, selected_defs):
+        """パターン切替待機を開始"""
+        self.is_waiting_for_pattern_change = True
+        self.waiting_pattern_index = self.test_tab.get_current_pattern_index()
+        self.waiting_selected_defs = selected_defs
+        self.waiting_def_index = 0
+        self.waiting_pole = "Pos"
+
+        remaining = self.test_tab.get_pattern_remaining_seconds()
+        self.log(f"パターン切替待機開始（残り{remaining:.1f}秒）", "INFO")
+        self.csv_status_label.config(text="■ パターン切替待機中", foreground="orange")
+
+        # 500msごとにパターン切替をチェック
+        self.after(500, self._check_pattern_change)
+
+    def _check_pattern_change(self):
+        """パターンが切り替わったかをチェック"""
+        if not self.is_waiting_for_pattern_change:
+            return
+
+        if not self.is_measuring:
+            # 計測が停止された場合は待機終了
+            self._end_waiting_for_pattern_change()
+            return
+
+        # パターン実行が終了した場合
+        if not self.test_tab.is_running:
+            self.log("パターン実行終了を検知、待機終了", "INFO")
+            self._end_waiting_for_pattern_change()
+            return
+
+        # パターンインデックスが変わったかチェック
+        current_index = self.test_tab.get_current_pattern_index()
+        if current_index != self.waiting_pattern_index:
+            # パターンが切り替わった
+            self.log(f"パターン切替を検知（No.{self.waiting_pattern_index} → No.{current_index}）、計測再開", "INFO")
+            self._end_waiting_for_pattern_change()
+
+            # 計測を再開
+            self.do_one_measurement(self.waiting_selected_defs, 0, "Pos")
+            return
+
+        # まだ切り替わっていない場合は再チェック
+        self.after(500, self._check_pattern_change)
+
+    def _end_waiting_for_pattern_change(self):
+        """パターン切替待機を終了"""
+        self.is_waiting_for_pattern_change = False
+        self.waiting_pattern_index = -1
+
+        if self.is_csv_logging:
+            self.csv_status_label.config(text="■ CSV保存中", foreground="red")
+        else:
+            self.csv_status_label.config(text="")

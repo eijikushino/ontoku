@@ -18,7 +18,7 @@ class TestTab(ttk.Frame):
                 'pole': tk.StringVar(value='Pos'),
                 'code': tk.StringVar(value='Center'),
                 'manual_value': tk.StringVar(value=''),  # Manual入力用
-                'time': tk.IntVar(value=1)
+                'time': tk.DoubleVar(value=1.0)  # 小数点1位まで対応
             })
         
         self.is_running = False
@@ -368,7 +368,8 @@ class TestTab(ttk.Frame):
         time_frame = ttk.Frame(row_frame)
         time_frame.pack(side=tk.LEFT, padx=2)
         
-        time_spinbox = ttk.Spinbox(time_frame, from_=1, to=999, 
+        time_spinbox = ttk.Spinbox(time_frame, from_=0.1, to=999.9,
+                                    increment=0.1, format='%.1f',
                                     textvariable=pattern['time'], width=8)
         time_spinbox.pack(side=tk.LEFT, padx=(0, 5))
         
@@ -468,22 +469,22 @@ class TestTab(ttk.Frame):
                         self.patterns[i]['code'].set(row[4])
                         self.patterns[i]['manual_value'].set(row[5])
                         try:
-                            self.patterns[i]['time'].set(int(row[6]))
+                            self.patterns[i]['time'].set(float(row[6]))
                         except:
-                            self.patterns[i]['time'].set(1)
+                            self.patterns[i]['time'].set(1.0)
                     elif len(row) >= 6:  # 旧形式（Manual列なし）
                         enabled_value = row[1].strip()
                         is_enabled = enabled_value in ['1', 'Yes', 'yes', 'YES', 'true', 'True', 'TRUE']
                         self.patterns[i]['enabled'].set(is_enabled)
-                        
+
                         self.patterns[i]['dataset'].set(row[2])
                         self.patterns[i]['pole'].set(row[3])
                         self.patterns[i]['code'].set(row[4])
                         self.patterns[i]['manual_value'].set('')  # 空にする
                         try:
-                            self.patterns[i]['time'].set(int(row[5]))
+                            self.patterns[i]['time'].set(float(row[5]))
                         except:
-                            self.patterns[i]['time'].set(1)
+                            self.patterns[i]['time'].set(1.0)
             
             # 読み込んだファイルのパスとファイル名を設定に反映
             import os
@@ -599,7 +600,7 @@ class TestTab(ttk.Frame):
         self.update_status_display(current_index, patterns)
         
         # パターン経過時間を0:00で表示(コマンド送信前)
-        pattern_total = self.current_pattern_time
+        pattern_total = int(self.current_pattern_time)
         pattern_total_min = pattern_total // 60
         pattern_total_sec = pattern_total % 60
         self.pattern_time_label.config(
@@ -888,7 +889,7 @@ class TestTab(ttk.Frame):
             # パターン経過時間
             pattern_elapsed = int(current_time - self.pattern_start_time + 0.5)  # 四捨五入
             if pattern_elapsed >= 0:  # マイナス値は表示しない
-                pattern_total = self.current_pattern_time
+                pattern_total = int(self.current_pattern_time)
                 pattern_elapsed_min = pattern_elapsed // 60
                 pattern_elapsed_sec = pattern_elapsed % 60
                 pattern_total_min = pattern_total // 60
@@ -900,17 +901,41 @@ class TestTab(ttk.Frame):
             # トータル経過時間
             total_elapsed = int(current_time - self.total_start_time + 0.5)  # 四捨五入
             if total_elapsed >= 0:  # マイナス値は表示しない
+                total_patterns_time_int = int(self.total_patterns_time)
                 total_elapsed_min = total_elapsed // 60
                 total_elapsed_sec = total_elapsed % 60
-                total_total_min = self.total_patterns_time // 60
-                total_total_sec = self.total_patterns_time % 60
+                total_total_min = total_patterns_time_int // 60
+                total_total_sec = total_patterns_time_int % 60
                 self.total_time_label.config(
                     text=f"{total_elapsed_min:02d}:{total_elapsed_sec:02d} / {total_total_min:02d}:{total_total_sec:02d}"
                 )
         # ホールド中は表示を更新しない(時間が止まって見える)
-        
+
         # 100ms後に再度更新
         self.after(100, self.update_time_display)
+
+    def get_pattern_remaining_seconds(self):
+        """現在のパターンの残り秒数を取得
+
+        Returns:
+            float: 残り秒数（パターン実行中でない場合はNone）
+        """
+        if not self.is_running or self.is_holding:
+            return None
+
+        current_time = time.time()
+        pattern_elapsed = current_time - self.pattern_start_time
+        remaining = self.current_pattern_time - pattern_elapsed
+
+        return max(0, remaining)
+
+    def get_current_pattern_index(self):
+        """現在実行中のパターンインデックスを取得
+
+        Returns:
+            int: パターンインデックス（実行中でない場合は-1）
+        """
+        return self.current_pattern_index if self.is_running else -1
 
     def load_settings(self):
         """設定ファイルから前回値を読み込み"""

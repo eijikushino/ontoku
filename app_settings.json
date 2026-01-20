@@ -5,12 +5,12 @@
     },
     "test": {
         "save_folder": "C:/Users/e-kus/Desktop/AI/ClaudeCode/温特アプリ/温特/pattern",
-        "filename": "温特パターン",
+        "filename": "pattern2短縮版",
         "def_checks": [
             true,
-            false,
-            false,
-            false,
+            true,
+            true,
+            true,
             false,
             false
         ],
@@ -18,15 +18,15 @@
             "CH01",
             "CH03",
             "CH05",
-            "CH03",
+            "CH07",
             "ー",
             "ー"
         ],
         "scanner_channels_neg": [
             "CH02",
             "CH04",
-            "CH04",
-            "CH00",
+            "CH06",
+            "CH08",
             "ー",
             "ー"
         ],
@@ -46,7 +46,7 @@
                 "DEF5_sn": "DFH456"
             },
             "save_config": {
-                "file_name": "温特計算用.csv"
+                "file_name": "パターン計測確認.csv"
             },
             "device_type": "main"
         }
