@@ -29,6 +29,16 @@ class GraphTab(ttk.Frame):
         self.serial_numbers = []
         self.checkboxes = {}
         self.graph_windows = []  # 開いているグラフウィンドウのリスト
+
+        # 温特グラフ詳細設定の保持（ウィンドウ外でも値を保持）
+        self._png_scale_setting = "1.0"  # PNG保存縮尺
+        self._show_temp_arrows = True  # 温度区間矢印表示
+        # 温度区間Div範囲（23℃、28℃、18℃の開始・終了Div）
+        self._temp_zone_divs = [
+            (0, 6),    # 23℃: 0〜6 Div
+            (6, 13),   # 28℃: 6〜13 Div
+            (13, 19)   # 18℃: 13〜19 Div
+        ]
         
         # 設定変更の監視フラグ（初期化中は保存しない）
         self._initializing = True
@@ -283,6 +293,13 @@ class GraphTab(ttk.Frame):
                     self.temp_file_path_var.set(temp_csv_path)
                     self._load_temp_csv_from_path(temp_csv_path, show_message=False)
 
+                # 温特グラフ詳細設定
+                self._png_scale_setting = settings.get('png_scale', '1.0')
+                self._show_temp_arrows = settings.get('show_temp_arrows', True)
+                # Div範囲を読み込み（リストのリストからタプルのリストに変換）
+                divs = settings.get('temp_zone_divs', [[0, 6], [6, 13], [13, 19]])
+                self._temp_zone_divs = [(d[0], d[1]) for d in divs]
+
             except Exception as e:
                 print(f"設定の読み込みに失敗しました: {e}")
     
@@ -302,7 +319,10 @@ class GraphTab(ttk.Frame):
                 'skip_first_data': self.skip_first_data_var.get(),
                 'skip_before_change': self.skip_before_change_var.get(),
                 'csv_file_path': self.file_path_var.get(),
-                'temp_csv_file_path': self.temp_file_path_var.get()
+                'temp_csv_file_path': self.temp_file_path_var.get(),
+                'png_scale': self._png_scale_setting,
+                'show_temp_arrows': self._show_temp_arrows,
+                'temp_zone_divs': [list(d) for d in self._temp_zone_divs]
             }
             
             with open(self.SETTINGS_FILE, 'w', encoding='utf-8') as f:
@@ -531,9 +551,9 @@ class GraphTab(ttk.Frame):
         # 設定画面ウィンドウ（温特グラフと被らないように右端に配置）
         self.temp_settings_window = tk.Toplevel(self)
         self.temp_settings_window.title("温特グラフ詳細設定")
-        # 画面右端に配置（高さを拡大）
+        # 画面右端に配置（コンパクトなサイズ）
         screen_width = self.temp_settings_window.winfo_screenwidth()
-        self.temp_settings_window.geometry(f"420x720+{screen_width - 450}+50")
+        self.temp_settings_window.geometry(f"430x600+{screen_width - 460}+50")
         self.temp_settings_window.resizable(False, False)
 
         # 選択されたキーを保存
@@ -551,104 +571,142 @@ class GraphTab(ttk.Frame):
         main_frame = ttk.Frame(self.temp_settings_window, padding=15)
         main_frame.pack(fill=tk.BOTH, expand=True)
 
-        # 計算結果表示エリア（POS/NEG別）
-        calc_frame = ttk.LabelFrame(main_frame, text="LSB電圧計算結果（実測値）", padding=10)
-        calc_frame.pack(fill=tk.X, pady=(0, 10))
+        # 計算結果表示エリア（POS/NEG横並び）
+        calc_frame = ttk.LabelFrame(main_frame, text="LSB電圧計算結果（実測値）", padding=5)
+        calc_frame.pack(fill=tk.X, pady=(0, 8))
 
-        # POS計算結果
-        ttk.Label(calc_frame, text="【POS】", font=('', 9, 'bold')).pack(anchor=tk.W)
-        self.calc_pos_fffff_label = ttk.Label(calc_frame, text="  +Full平均: ---")
-        self.calc_pos_fffff_label.pack(anchor=tk.W, pady=1)
-        self.calc_pos_zero_label = ttk.Label(calc_frame, text="  -Full平均: ---")
-        self.calc_pos_zero_label.pack(anchor=tk.W, pady=1)
-        self.calc_pos_lsb_label = ttk.Label(calc_frame, text="  LSB電圧: ---")
-        self.calc_pos_lsb_label.pack(anchor=tk.W, pady=1)
+        # POS/NEG横並びフレーム
+        calc_row = ttk.Frame(calc_frame)
+        calc_row.pack(fill=tk.X)
 
-        # NEG計算結果
-        ttk.Label(calc_frame, text="【NEG】", font=('', 9, 'bold')).pack(anchor=tk.W, pady=(5, 0))
-        self.calc_neg_fffff_label = ttk.Label(calc_frame, text="  +Full平均: ---")
-        self.calc_neg_fffff_label.pack(anchor=tk.W, pady=1)
-        self.calc_neg_zero_label = ttk.Label(calc_frame, text="  -Full平均: ---")
-        self.calc_neg_zero_label.pack(anchor=tk.W, pady=1)
-        self.calc_neg_lsb_label = ttk.Label(calc_frame, text="  LSB電圧: ---")
-        self.calc_neg_lsb_label.pack(anchor=tk.W, pady=1)
+        # POS計算結果（左側・上詰め）
+        pos_frame = ttk.Frame(calc_row)
+        pos_frame.pack(side=tk.LEFT, padx=(0, 20), anchor=tk.N)
+        ttk.Label(pos_frame, text="【POS】", font=('', 9, 'bold')).pack(anchor=tk.W)
+        self.calc_pos_fffff_label = ttk.Label(pos_frame, text="+Full: ---")
+        self.calc_pos_fffff_label.pack(anchor=tk.W)
+        self.calc_pos_zero_label = ttk.Label(pos_frame, text="-Full: ---")
+        self.calc_pos_zero_label.pack(anchor=tk.W)
+        self.calc_pos_lsb_label = ttk.Label(pos_frame, text="LSB: ---")
+        self.calc_pos_lsb_label.pack(anchor=tk.W)
 
-        # NEG絶対値無効チェックボックス
-        neg_abs_frame = ttk.Frame(calc_frame)
-        neg_abs_frame.pack(anchor=tk.W, pady=(5, 0))
+        # NEG計算結果（右側・上詰め）
+        neg_frame = ttk.Frame(calc_row)
+        neg_frame.pack(side=tk.LEFT, anchor=tk.N)
+        ttk.Label(neg_frame, text="【NEG】", font=('', 9, 'bold')).pack(anchor=tk.W)
+        self.calc_neg_fffff_label = ttk.Label(neg_frame, text="+Full: ---")
+        self.calc_neg_fffff_label.pack(anchor=tk.W)
+        self.calc_neg_zero_label = ttk.Label(neg_frame, text="-Full: ---")
+        self.calc_neg_zero_label.pack(anchor=tk.W)
+        self.calc_neg_lsb_label = ttk.Label(neg_frame, text="LSB: ---")
+        self.calc_neg_lsb_label.pack(anchor=tk.W)
+        # NEG絶対値無効チェックボックス（NEGの下に配置）
         self.neg_no_abs_check = ttk.Checkbutton(
-            neg_abs_frame,
-            text="NEG: 絶対値を使用しない（LSB電圧が負になる）",
+            neg_frame,
+            text="絶対値を使用しない",
             variable=self.neg_no_abs_var,
             command=self._on_neg_no_abs_changed
         )
-        self.neg_no_abs_check.pack(anchor=tk.W, padx=10)
+        self.neg_no_abs_check.pack(anchor=tk.W)
 
         # Y軸(LSB)設定エリア
-        yaxis_frame = ttk.LabelFrame(main_frame, text="Y軸(LSB)設定", padding=10)
-        yaxis_frame.pack(fill=tk.X, pady=(0, 10))
+        yaxis_frame = ttk.LabelFrame(main_frame, text="Y軸(LSB)設定", padding=5)
+        yaxis_frame.pack(fill=tk.X, pady=(0, 8))
 
-        # Y軸範囲（1行目：デフォルト）
-        yaxis_row0 = ttk.Frame(yaxis_frame)
-        yaxis_row0.pack(fill=tk.X, pady=3)
-        ttk.Label(yaxis_row0, text="Y軸範囲:", width=12).pack(side=tk.LEFT)
-        ttk.Radiobutton(yaxis_row0, text="デフォルト(±8LSB 2LSB/Div)",
+        # Y軸範囲（1行目）
+        yaxis_row1 = ttk.Frame(yaxis_frame)
+        yaxis_row1.pack(fill=tk.X, pady=2)
+        ttk.Radiobutton(yaxis_row1, text="デフォルト(±8LSB 2LSB/Div)",
                         variable=self.temp_yaxis_select_var, value="default").pack(side=tk.LEFT)
 
-        # Y軸範囲（2行目：オート）
-        yaxis_row1 = ttk.Frame(yaxis_frame)
-        yaxis_row1.pack(fill=tk.X, pady=3)
-        ttk.Label(yaxis_row1, text="", width=12).pack(side=tk.LEFT)
-        ttk.Radiobutton(yaxis_row1, text="オート", variable=self.temp_yaxis_select_var,
-                        value="auto").pack(side=tk.LEFT)
+        # Y軸範囲（2行目：オートとLSB/Div）
+        yaxis_row2 = ttk.Frame(yaxis_frame)
+        yaxis_row2.pack(fill=tk.X, pady=2)
+        ttk.Radiobutton(yaxis_row2, text="オート",
+                        variable=self.temp_yaxis_select_var, value="auto").pack(side=tk.LEFT)
+        ttk.Label(yaxis_row2, text="LSB/Div:").pack(side=tk.LEFT, padx=(15, 0))
+        ttk.Entry(yaxis_row2, textvariable=self.lsb_per_div_var, width=5).pack(side=tk.LEFT, padx=3)
+        ttk.Label(yaxis_row2, text="※オート/設定値時有効", foreground="gray").pack(side=tk.LEFT, padx=(5, 0))
 
         # Y軸範囲（3行目：設定値）
-        yaxis_row2 = ttk.Frame(yaxis_frame)
-        yaxis_row2.pack(fill=tk.X, pady=3)
-        ttk.Label(yaxis_row2, text="", width=12).pack(side=tk.LEFT)
-        ttk.Radiobutton(yaxis_row2, text="設定値", variable=self.temp_yaxis_select_var,
-                        value="manual").pack(side=tk.LEFT)
-        ttk.Label(yaxis_row2, text="Min:").pack(side=tk.LEFT, padx=(10, 2))
-        ttk.Entry(yaxis_row2, textvariable=self.yaxis_min_var, width=7).pack(side=tk.LEFT)
-        ttk.Label(yaxis_row2, text="Max:").pack(side=tk.LEFT, padx=(10, 2))
-        ttk.Entry(yaxis_row2, textvariable=self.yaxis_max_var, width=7).pack(side=tk.LEFT)
-
-        # 縦軸LSB/Div
-        div_frame = ttk.Frame(yaxis_frame)
-        div_frame.pack(fill=tk.X, pady=3)
-        ttk.Label(div_frame, text="縦軸LSB/Div:", width=12).pack(side=tk.LEFT)
-        ttk.Entry(div_frame, textvariable=self.lsb_per_div_var, width=10).pack(side=tk.LEFT, padx=5)
+        yaxis_row3 = ttk.Frame(yaxis_frame)
+        yaxis_row3.pack(fill=tk.X, pady=2)
+        ttk.Radiobutton(yaxis_row3, text="設定値",
+                        variable=self.temp_yaxis_select_var, value="manual").pack(side=tk.LEFT)
+        ttk.Entry(yaxis_row3, textvariable=self.yaxis_min_var, width=5).pack(side=tk.LEFT, padx=(5, 0))
+        ttk.Label(yaxis_row3, text="〜").pack(side=tk.LEFT)
+        ttk.Entry(yaxis_row3, textvariable=self.yaxis_max_var, width=5).pack(side=tk.LEFT)
 
         # Y軸選択変更時に自動更新
         self.temp_yaxis_select_var.trace_add('write', lambda *args: self._redraw_temp_graph_preserve_position())
 
-        # X軸設定エリア（別枠）
-        xaxis_frame = ttk.LabelFrame(main_frame, text="X軸設定", padding=10)
-        xaxis_frame.pack(fill=tk.X, pady=(0, 10))
-
+        # X軸設定エリア
+        xaxis_frame = ttk.LabelFrame(main_frame, text="X軸設定", padding=5)
+        xaxis_frame.pack(fill=tk.X, pady=(0, 8))
         ttk.Checkbutton(xaxis_frame, text="全表示（デフォルト: 25div=250分）",
                         variable=self.xaxis_full_var,
                         command=self._on_xaxis_full_changed).pack(anchor=tk.W)
 
-        # PNG保存エリア
-        save_frame = ttk.LabelFrame(main_frame, text="グラフ保存", padding=10)
-        save_frame.pack(fill=tk.X, pady=(0, 10))
+        # 温度区間矢印設定エリア
+        arrow_frame = ttk.LabelFrame(main_frame, text="温度区間矢印設定", padding=5)
+        arrow_frame.pack(fill=tk.X, pady=(0, 8))
 
-        ttk.Button(save_frame, text="グラフをPNG保存",
-                   command=self._save_temp_graphs).pack(anchor=tk.W)
+        # 矢印表示ON/OFF
+        self.show_temp_arrows_var = tk.BooleanVar(value=self._show_temp_arrows)
+        ttk.Checkbutton(arrow_frame, text="温度区間矢印を表示",
+                        variable=self.show_temp_arrows_var,
+                        command=self._on_temp_arrow_setting_changed).pack(anchor=tk.W)
 
-        # 区間別平均電圧表示エリア
-        analysis_frame = ttk.LabelFrame(main_frame, text="データ解析", padding=10)
-        analysis_frame.pack(fill=tk.X, pady=(0, 10))
+        # Div範囲入力（23℃、28℃、18℃を横並び）
+        div_row = ttk.Frame(arrow_frame)
+        div_row.pack(fill=tk.X, pady=(3, 0))
+        # 23℃
+        ttk.Label(div_row, text="23℃:").pack(side=tk.LEFT)
+        self.div_23_start_var = tk.StringVar(value=str(self._temp_zone_divs[0][0]))
+        self.div_23_end_var = tk.StringVar(value=str(self._temp_zone_divs[0][1]))
+        ttk.Entry(div_row, textvariable=self.div_23_start_var, width=3).pack(side=tk.LEFT, padx=1)
+        ttk.Label(div_row, text="-").pack(side=tk.LEFT)
+        ttk.Entry(div_row, textvariable=self.div_23_end_var, width=3).pack(side=tk.LEFT, padx=(1, 5))
+        # 28℃
+        ttk.Label(div_row, text="28℃:").pack(side=tk.LEFT)
+        self.div_28_start_var = tk.StringVar(value=str(self._temp_zone_divs[1][0]))
+        self.div_28_end_var = tk.StringVar(value=str(self._temp_zone_divs[1][1]))
+        ttk.Entry(div_row, textvariable=self.div_28_start_var, width=3).pack(side=tk.LEFT, padx=1)
+        ttk.Label(div_row, text="-").pack(side=tk.LEFT)
+        ttk.Entry(div_row, textvariable=self.div_28_end_var, width=3).pack(side=tk.LEFT, padx=(1, 5))
+        # 18℃
+        ttk.Label(div_row, text="18℃:").pack(side=tk.LEFT)
+        self.div_18_start_var = tk.StringVar(value=str(self._temp_zone_divs[2][0]))
+        self.div_18_end_var = tk.StringVar(value=str(self._temp_zone_divs[2][1]))
+        ttk.Entry(div_row, textvariable=self.div_18_start_var, width=3).pack(side=tk.LEFT, padx=1)
+        ttk.Label(div_row, text="-").pack(side=tk.LEFT)
+        ttk.Entry(div_row, textvariable=self.div_18_end_var, width=3).pack(side=tk.LEFT, padx=(1, 5))
+        ttk.Button(div_row, text="適用", width=4,
+                   command=self._on_temp_arrow_setting_changed).pack(side=tk.LEFT)
 
+        # PNG保存エリア（1行にまとめる）
+        save_frame = ttk.LabelFrame(main_frame, text="グラフ保存", padding=5)
+        save_frame.pack(fill=tk.X, pady=(0, 8))
+        scale_row = ttk.Frame(save_frame)
+        scale_row.pack(fill=tk.X)
+        ttk.Label(scale_row, text="PNG縮尺:").pack(side=tk.LEFT)
+        self.png_scale_var = tk.StringVar(value=self._png_scale_setting)
+        ttk.Entry(scale_row, textvariable=self.png_scale_var, width=5).pack(side=tk.LEFT, padx=3)
+        ttk.Label(scale_row, text="倍").pack(side=tk.LEFT)
+        ttk.Button(scale_row, text="PNG保存",
+                   command=self._save_temp_graphs).pack(side=tk.LEFT, padx=(15, 0))
+
+        # データ解析エリア（1行にまとめる）
+        analysis_frame = ttk.LabelFrame(main_frame, text="データ解析", padding=5)
+        analysis_frame.pack(fill=tk.X, pady=(0, 8))
         ttk.Button(analysis_frame, text="温度係数表示",
-                   command=self._show_section_averages).pack(anchor=tk.W)
+                   command=self._show_section_averages).pack(side=tk.LEFT)
 
         # 閉じるボタン
         btn_frame = ttk.Frame(main_frame)
-        btn_frame.pack(fill=tk.X, pady=10)
+        btn_frame.pack(fill=tk.X, pady=(5, 0))
         ttk.Button(btn_frame, text="閉じる",
-                   command=self.temp_settings_window.destroy).pack(side=tk.RIGHT, padx=5)
+                   command=self.temp_settings_window.destroy).pack(side=tk.RIGHT)
 
         # 初回描画（デフォルト値で）
         self._draw_temp_graph_and_update_calc()
@@ -742,13 +800,18 @@ class GraphTab(ttk.Frame):
         # X軸全表示オプションを取得
         xaxis_full = self.xaxis_full_var.get()
 
+        # 温度区間矢印設定を取得（設定画面から）
+        temp_zone_divs = getattr(self, '_temp_zone_divs', [(0, 6), (6, 13), (13, 19)])
+        show_temp_arrows = getattr(self, '_show_temp_arrows', True)
+
         for key in self.temp_graph_selected_keys:
             serial, pole = key.rsplit('_', 1)
             # NEGの場合のみneg_no_absを適用
             use_no_abs = neg_no_abs if pole == "NEG" else False
             calc_info = plotter.plot_temperature_characteristic(
                 self.csv_data, self.temp_csv_data, serial, pole,
-                yaxis_mode, yaxis_min, yaxis_max, use_no_abs, xaxis_full
+                yaxis_mode, yaxis_min, yaxis_max, use_no_abs, xaxis_full,
+                temp_zone_divs=temp_zone_divs, show_temp_arrows=show_temp_arrows
             )
             if calc_info:
                 # 全グラフ情報を保存
@@ -851,6 +914,21 @@ class GraphTab(ttk.Frame):
         """X軸全表示チェックボックスの変更時: グラフを再描画（位置保持）"""
         self._redraw_temp_graph_preserve_position()
 
+    def _on_temp_arrow_setting_changed(self):
+        """温度区間矢印設定の変更時: グラフを再描画（位置保持）"""
+        # 設定を保存
+        self._show_temp_arrows = self.show_temp_arrows_var.get()
+        try:
+            self._temp_zone_divs = [
+                (int(self.div_23_start_var.get()), int(self.div_23_end_var.get())),
+                (int(self.div_28_start_var.get()), int(self.div_28_end_var.get())),
+                (int(self.div_18_start_var.get()), int(self.div_18_end_var.get()))
+            ]
+        except ValueError:
+            pass  # 無効な値の場合は前回値を維持
+        self.save_settings()
+        self._redraw_temp_graph_preserve_position()
+
     def _redraw_temp_graph_preserve_position(self):
         """温特グラフを位置を保持して再描画"""
         import matplotlib.pyplot as plt
@@ -898,19 +976,40 @@ class GraphTab(ttk.Frame):
             messagebox.showerror("エラー", "保存するグラフがありません")
             return
 
+        # 縮尺を取得・検証（0.5～3.0）
+        try:
+            scale = float(self.png_scale_var.get())
+            if scale < 0.5:
+                scale = 0.5
+            elif scale > 3.0:
+                scale = 3.0
+            # 小数第1位に丸める
+            scale = round(scale, 1)
+            self.png_scale_var.set(str(scale))
+        except ValueError:
+            scale = 1.0
+            self.png_scale_var.set("1.0")
+
+        # 設定を保存
+        self._png_scale_setting = self.png_scale_var.get()
+        self.save_settings()
+
         # フォルダ選択ダイアログ
         folder_path = filedialog.askdirectory(title="保存先フォルダを選択")
         if not folder_path:
             return
 
-        # 保存実行
+        # 保存実行（dpi = 150 × 縮尺）
+        base_dpi = 150
+        dpi = int(base_dpi * scale)
         saved_files = []
         errors = []
         for serial, pole, fig in graphs_to_save:
-            filename = f"温特グラフ_{serial}_{pole}.png"
+            base_filename = f"温特グラフ_{serial}_{pole}"
+            filename = self._get_unique_png_filename(folder_path, base_filename)
             filepath = os.path.join(folder_path, filename)
             try:
-                fig.savefig(filepath, dpi=150, bbox_inches='tight')
+                fig.savefig(filepath, dpi=dpi, bbox_inches='tight')
                 saved_files.append(filename)
             except Exception as e:
                 errors.append(f"{filename}: {str(e)}")
@@ -925,6 +1024,23 @@ class GraphTab(ttk.Frame):
                 messagebox.showinfo("成功", msg)
         else:
             messagebox.showerror("エラー", "保存に失敗しました:\n" + "\n".join(errors))
+
+    def _get_unique_png_filename(self, folder_path, base_filename):
+        """同名ファイルが存在する場合、連番を付けた別名を返す"""
+        filename = f"{base_filename}.png"
+        filepath = os.path.join(folder_path, filename)
+
+        if not os.path.exists(filepath):
+            return filename
+
+        # 連番を付けて重複しないファイル名を探す
+        counter = 1
+        while True:
+            filename = f"{base_filename}_{counter}.png"
+            filepath = os.path.join(folder_path, filename)
+            if not os.path.exists(filepath):
+                return filename
+            counter += 1
 
     def _show_section_averages(self):
         """区間別平均電圧を表示するウィンドウを開く"""
@@ -1399,6 +1515,30 @@ class GraphTab(ttk.Frame):
         ws.row_dimensions[1].height = 28  # ヘッダー行
         for r in range(2, row_idx):
             ws.row_dimensions[r].height = 15
+
+        # 大外枠を太字に設定
+        last_row = row_idx - 1
+        last_col = 9
+        thick_side = Side(style='medium')
+        thin_side = Side(style='thin')
+
+        for row in range(1, last_row + 1):
+            for col in range(1, last_col + 1):
+                cell = ws.cell(row=row, column=col)
+                # 既存ボーダーを取得（斜線を保持）
+                existing = cell.border
+                new_left = thick_side if col == 1 else (existing.left or thin_side)
+                new_right = thick_side if col == last_col else (existing.right or thin_side)
+                new_top = thick_side if row == 1 else (existing.top or thin_side)
+                new_bottom = thick_side if row == last_row else (existing.bottom or thin_side)
+
+                cell.border = Border(
+                    left=new_left, right=new_right,
+                    top=new_top, bottom=new_bottom,
+                    diagonal=existing.diagonal,
+                    diagonalDown=existing.diagonalDown,
+                    diagonalUp=existing.diagonalUp
+                )
 
         return row_idx - 1, 9  # 最終行、最終列
 

@@ -958,7 +958,8 @@ class LSBGraphPlotter:
 
     def plot_temperature_characteristic(self, csv_data, temp_csv_data, serial, pole,
                                          temp_yaxis_mode="manual", temp_yaxis_min=-8, temp_yaxis_max=8,
-                                         no_abs=False, xaxis_full=False):
+                                         no_abs=False, xaxis_full=False,
+                                         temp_zone_divs=None, show_temp_arrows=True):
         """
         温特グラフを表示（2軸: LSB変動 + 温度差）
 
@@ -972,6 +973,8 @@ class LSBGraphPlotter:
             temp_yaxis_max: Y軸(LSB)最大値（デフォルト: 8）
             no_abs: LSB電圧計算で絶対値を使用しない（デフォルト: False）
             xaxis_full: X軸全表示（デフォルト: False=25div固定）
+            temp_zone_divs: 温度区間Div範囲（デフォルト: [(0,6), (6,13), (13,19)]）
+            show_temp_arrows: 温度区間矢印を表示するか（デフォルト: True）
 
         Returns:
             True: 成功, None: 失敗
@@ -1030,6 +1033,28 @@ class LSBGraphPlotter:
 
         # タイトル
         fig.suptitle(f'1PB397MK2DFH_{serial} {pole} 温度特性試験結果')
+
+        # 温度区間の矢印を描画
+        if show_temp_arrows:
+            # デフォルトのDiv範囲
+            if temp_zone_divs is None:
+                temp_zone_divs = [(0, 6), (6, 13), (13, 19)]
+
+            # Div範囲から分単位の温度区間を作成（1Div = 10分）
+            temp_zone_labels = ["23℃", "28℃", "18℃"]
+            temp_zones = []
+            for i, (start_div, end_div) in enumerate(temp_zone_divs):
+                temp_zones.append({
+                    'zone_num': i,
+                    'start_time': start_div * 10,  # Div → 分
+                    'end_time': end_div * 10
+                })
+
+            if temp_zones:
+                # Y軸の上部に矢印を配置（Y軸範囲の上端より少し上）
+                y_min_val, y_max_val = ax1.get_ylim()
+                arrow_y = y_max_val + (y_max_val - y_min_val) * 0.02
+                self._draw_temp_zone_arrows(ax1, temp_zones, temp_zone_labels, arrow_y)
 
         # 凡例を統合
         lines1, labels1 = ax1.get_legend_handles_labels()
@@ -1390,3 +1415,116 @@ class LSBGraphPlotter:
             })
 
         return results
+
+    def _detect_temp_zones(self, elapsed_times, codes, datasets):
+        """
+        温度区間を検出（コードパターンから判定）
+
+        温特パターン: FFFFF→00000→80000 を4回繰り返し
+        - 1回目: 23℃
+        - 2回目: 28℃
+        - 3回目: 18℃
+        - 4回目: 23℃（戻し）
+
+        Args:
+            elapsed_times: 経過時間（分）のリスト
+            codes: Codeのリスト
+            datasets: DataSetのリスト
+
+        Returns:
+            list: 温度区間リスト
+                [{
+                    'zone_num': 温度区間番号（0始まり）,
+                    'start_time': 開始時間（分）,
+                    'end_time': 終了時間（分）
+                }, ...]
+        """
+        if not elapsed_times or not codes:
+            return []
+
+        # コード区間を検出（連続する同じコードを1区間）
+        code_sections = []
+        current_code = None
+        section_start_idx = 0
+
+        for i, code_str in enumerate(codes):
+            # コード名を正規化
+            code_upper = code_str.upper().strip()
+            if 'FFFFF' in code_upper:
+                normalized = 'FFFFF'
+            elif '00000' in code_upper:
+                normalized = '00000'
+            elif '80000' in code_upper:
+                normalized = '80000'
+            else:
+                normalized = code_upper
+
+            if normalized != current_code:
+                if current_code is not None:
+                    code_sections.append({
+                        'code': current_code,
+                        'start_idx': section_start_idx,
+                        'end_idx': i - 1
+                    })
+                current_code = normalized
+                section_start_idx = i
+
+        # 最後の区間を追加
+        if current_code is not None:
+            code_sections.append({
+                'code': current_code,
+                'start_idx': section_start_idx,
+                'end_idx': len(codes) - 1
+            })
+
+        # 温度区間を構成（3コード=1温度区間）
+        temp_zones = []
+        codes_per_temp = 3  # FFFFF, 00000, 80000
+
+        for i in range(0, len(code_sections), codes_per_temp):
+            if i + codes_per_temp - 1 < len(code_sections):
+                # 温度区間の開始・終了インデックス
+                start_idx = code_sections[i]['start_idx']
+                end_idx = code_sections[i + codes_per_temp - 1]['end_idx']
+
+                temp_zones.append({
+                    'zone_num': len(temp_zones),
+                    'start_time': elapsed_times[start_idx],
+                    'end_time': elapsed_times[end_idx]
+                })
+
+        return temp_zones
+
+    def _draw_temp_zone_arrows(self, ax, temp_zones, temp_labels, y_position):
+        """
+        温度区間の矢印とラベルを描画
+
+        Args:
+            ax: Matplotlibのaxisオブジェクト
+            temp_zones: 温度区間リスト
+            temp_labels: 温度ラベルリスト（例: ["23℃", "28℃", "18℃"]）
+            y_position: Y軸位置（データ座標）
+        """
+        if not temp_zones or not temp_labels:
+            return
+
+        # 最大3つの温度区間のみ描画（4つ目の戻しは除外）
+        num_zones = min(len(temp_zones), len(temp_labels), 3)
+
+        for i in range(num_zones):
+            zone = temp_zones[i]
+            label = temp_labels[i] if i < len(temp_labels) else ""
+
+            start_time = zone['start_time']
+            end_time = zone['end_time']
+            center_time = (start_time + end_time) / 2
+
+            # 両端矢印を描画（←→）
+            ax.annotate('', xy=(end_time, y_position), xytext=(start_time, y_position),
+                       arrowprops=dict(arrowstyle='<->', color='#555555', lw=1.2),
+                       annotation_clip=False)
+
+            # 温度ラベルを中央に配置
+            ax.text(center_time, y_position, label,
+                   ha='center', va='bottom', fontsize=9, color='#333333',
+                   clip_on=False)
