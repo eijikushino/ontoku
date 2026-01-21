@@ -73,7 +73,7 @@ class MainApplication(tk.Tk):
 
         # 背景色を薄いグレーに、ボタンを白系に設定
         bg_color = '#f0f0f0'
-        style.configure('TFrame', background=bg_color)
+        style.configure('TFrame', background=bg_color, borderwidth=0, relief='flat')
         style.configure('TLabel', background=bg_color)
         style.configure('TLabelframe', background=bg_color)
         style.configure('TLabelframe.Label', background=bg_color)
@@ -283,7 +283,7 @@ class MainApplication(tk.Tk):
         
         ttk.Label(about_window, text="DEF Command Set App", 
                   font=("", 12, "bold")).pack(pady=5)
-        ttk.Label(about_window, text="Version 1.12").pack(pady=3)
+        ttk.Label(about_window, text="Version 1.24").pack(pady=3)
         ttk.Label(about_window, text="・パターン試験").pack(pady=1)
         ttk.Label(about_window, text="・温特グラフ表示").pack(pady=1)
         

@@ -43,6 +43,9 @@ class TestTab(ttk.Frame):
         self.total_start_time = 0
         self.total_patterns_time = 0
         self.current_pattern_time = 0
+
+        # パターン行のNoラベルを保持（実行中表示用）
+        self.no_labels = []
         
         # 設定ファイルから前回値を読み込み
         self.load_settings()
@@ -72,7 +75,7 @@ class TestTab(ttk.Frame):
         header_frame.pack(fill=tk.X, pady=(0, 5))
         
         # チェックボックス列用の空白(チェックボックスと同じpadx)
-        ttk.Label(header_frame, text="", width=2).pack(side=tk.LEFT, padx=(5, 5))
+        ttk.Label(header_frame, text="", width=2).pack(side=tk.LEFT, padx=(10, 5))
         
         # No列(行データと同じpadx)
         header_no = ttk.Label(header_frame, text="No", width=3, anchor=tk.CENTER)
@@ -83,20 +86,20 @@ class TestTab(ttk.Frame):
         header_dataset.pack(side=tk.LEFT, padx=2)
         
         # Pole列(行データと同じpadx)
-        header_pole = ttk.Label(header_frame, text="Pole", width=8, anchor=tk.CENTER)
-        header_pole.pack(side=tk.LEFT, padx=2)
+        header_pole = ttk.Label(header_frame, text="Pole", width=5, anchor=tk.CENTER)
+        header_pole.pack(side=tk.LEFT, padx=(10, 2))
         
         # Code列(行データと同じpadx)
-        header_code = ttk.Label(header_frame, text="Code", width=18, anchor=tk.CENTER)
-        header_code.pack(side=tk.LEFT, padx=2)
-        
+        header_code = ttk.Label(header_frame, text="Code", width=12, anchor=tk.W)
+        header_code.pack(side=tk.LEFT, padx=(25, 2))
+
         # Manual列(新規追加)
-        header_manual = ttk.Label(header_frame, text="Manual(HEX)", width=12, anchor=tk.CENTER)
-        header_manual.pack(side=tk.LEFT, padx=2)
+        header_manual = ttk.Label(header_frame, text="Manual(HEX)", width=12, anchor=tk.W)
+        header_manual.pack(side=tk.LEFT, padx=(5, 2))
         
         # Time列(行データと同じpadx)
-        header_time = ttk.Label(header_frame, text="Time", width=10, anchor=tk.CENTER)
-        header_time.pack(side=tk.LEFT, padx=2)
+        header_time = ttk.Label(header_frame, text="Time", width=10, anchor=tk.W)
+        header_time.pack(side=tk.LEFT, padx=(0, 2))
         
         # スクロール可能なテーブルフレーム
         table_canvas = tk.Canvas(table_area, height=300)
@@ -339,11 +342,13 @@ class TestTab(ttk.Frame):
         
         # チェックボックス(直接配置)
         cb = ttk.Checkbutton(row_frame, variable=pattern['enabled'])
-        cb.pack(side=tk.LEFT, padx=(5, 5))
+        cb.pack(side=tk.LEFT, padx=(10, 5))
         
-        # 番号ラベル
-        no_label = ttk.Label(row_frame, text=f"{index + 1}", width=4, anchor=tk.CENTER)
+        # 番号ラベル（tk.Labelで背景色変更可能に）
+        no_label = tk.Label(row_frame, text=f"{index + 1}", width=4, anchor=tk.CENTER,
+                            bg='#f0f0f0', fg='black', font=('', 9))
         no_label.pack(side=tk.LEFT, padx=(0, 2))
+        self.no_labels.append(no_label)
         
         # DataSet コンボボックス
         dataset_combo = ttk.Combobox(row_frame, textvariable=pattern['dataset'], 
@@ -351,8 +356,8 @@ class TestTab(ttk.Frame):
         dataset_combo.pack(side=tk.LEFT, padx=2)
         
         # Pole コンボボックス
-        pole_combo = ttk.Combobox(row_frame, textvariable=pattern['pole'], 
-                                   values=['Pos', 'Neg'], width=8, state='readonly')
+        pole_combo = ttk.Combobox(row_frame, textvariable=pattern['pole'],
+                                   values=['Pos', 'Neg'], width=5, state='readonly')
         pole_combo.pack(side=tk.LEFT, padx=2)
         
         # Code コンボボックス（Manualを追加）
@@ -855,6 +860,9 @@ class TestTab(ttk.Frame):
         # 実行状況を「完了」に設定(リセットしない)
         self.current_pattern_label.config(text="完了")
         # パターン経過時間とトータル経過時間はそのまま保持
+
+        # パターン行のハイライトをリセット
+        self._reset_pattern_highlight()
         
         self.log_message("=" * 40, "INFO")
         self.log_message("パターンテスト完了", "INFO")
@@ -874,8 +882,27 @@ class TestTab(ttk.Frame):
             pattern = total_patterns[current_index]
             self.current_pattern_label.config(text=f"No.{pattern['index']}")
             self.current_pattern_time = pattern['time'] * 60  # 分を秒に変換
+
+            # パターン行のNo表示を更新（実行中は色を変更）
+            self._highlight_current_pattern(pattern['index'] - 1)
         else:
             self.current_pattern_label.config(text="完了")
+            self._reset_pattern_highlight()
+
+    def _highlight_current_pattern(self, pattern_index):
+        """実行中のパターンのNo表示をハイライト"""
+        for i, label in enumerate(self.no_labels):
+            if i == pattern_index:
+                # 実行中: 青背景・白文字
+                label.config(bg='#0066cc', fg='white', font=('', 9, 'bold'))
+            else:
+                # 通常: グレー背景・黒文字
+                label.config(bg='#f0f0f0', fg='black', font=('', 9))
+
+    def _reset_pattern_highlight(self):
+        """全パターンのNo表示を通常状態に戻す"""
+        for label in self.no_labels:
+            label.config(bg='#f0f0f0', fg='black', font=('', 9))
     
     def update_time_display(self):
         """時間表示を更新(100msごとに呼ばれる)"""
