@@ -46,18 +46,139 @@ class MainApplication(tk.Tk):
         # TestタブにDACタブのDEF選択状態を共有
         self.test_tab.set_def_vars(self.dac_tab.def_vars)
         
-        # タブの追加
-        self.notebook.add(self.comm_tab, text="通信設定")
-        self.notebook.add(self.test_tab, text="Pattern Test")
-        self.notebook.add(self.graph_tab, text="グラフ描画")
-        self.notebook.add(self.dac_tab, text="DAC操作")
-        self.notebook.add(self.file_tab, text="ファイル保存")
-        self.notebook.add(self.dmm3458a_tab, text="DMM3458A")
-        self.notebook.add(self.scanner_tab, text="スキャナー")
+        # タブのスタイル設定（色分け・パディング）
+        self._setup_tab_styles()
+
+        # タブの追加（両脇にスペースを追加）
+        self.notebook.add(self.comm_tab, text="  通信設定  ")
+        self.notebook.add(self.test_tab, text="  Pattern Test  ")
+        self.notebook.add(self.graph_tab, text="  グラフ描画  ")
+        self.notebook.add(self.dac_tab, text="  DAC操作  ")
+        self.notebook.add(self.file_tab, text="  ファイル保存  ")
+        self.notebook.add(self.dmm3458a_tab, text="  DMM3458A  ")
+        self.notebook.add(self.scanner_tab, text="  スキャナー  ")
         
         # ステータスバーの作成
         self.create_statusbar()
     
+    def _setup_tab_styles(self):
+        """タブのスタイルを設定（色分け・パディング）"""
+        style = ttk.Style()
+
+        # カスタマイズ可能なテーマに変更（Windowsデフォルトは色変更不可）
+        style.theme_use('clam')
+
+        # チェックボックスのレ点画像を作成
+        self._create_checkbox_images(style)
+
+        # 背景色を薄いグレーに、ボタンを白系に設定
+        bg_color = '#f0f0f0'
+        style.configure('TFrame', background=bg_color)
+        style.configure('TLabel', background=bg_color)
+        style.configure('TLabelframe', background=bg_color)
+        style.configure('TLabelframe.Label', background=bg_color)
+        style.configure('TCheckbutton', background=bg_color)
+        style.configure('TRadiobutton', background=bg_color)
+
+        # ボタンを濃い灰色で目立たせる
+        style.configure('TButton', background='#c0c0c0', padding=[8, 4])
+        style.map('TButton',
+                  background=[('active', '#a8a8a8'), ('pressed', '#909090')],
+                  relief=[('pressed', 'sunken')])
+
+        # タブ全体のパディングを調整
+        style.configure('TNotebook.Tab', padding=[12, 6])
+
+        # タブ選択時のスタイル
+        style.map('TNotebook.Tab',
+                  background=[('selected', '#e0e8f0'), ('!selected', '#f0f0f0')],
+                  foreground=[('selected', '#000000'), ('!selected', '#444444')])
+
+        # タブ変更時に色を適用
+        self.notebook.bind('<<NotebookTabChanged>>', self._on_tab_changed)
+
+        # 初期状態でも色を適用するため、少し遅延して実行
+        self.after(100, self._apply_tab_colors)
+
+    def _create_checkbox_images(self, style):
+        """チェックボックス用のレ点画像を作成"""
+        # チェックなし（空の四角）
+        self._checkbox_unchecked = tk.PhotoImage(width=16, height=16)
+        self._checkbox_unchecked.put(('#999999',), to=(0, 0, 16, 1))    # 上辺
+        self._checkbox_unchecked.put(('#999999',), to=(0, 15, 16, 16))  # 下辺
+        self._checkbox_unchecked.put(('#999999',), to=(0, 0, 1, 16))    # 左辺
+        self._checkbox_unchecked.put(('#999999',), to=(15, 0, 16, 16))  # 右辺
+        # 内部を白で塗りつぶし
+        for y in range(1, 15):
+            self._checkbox_unchecked.put(('#ffffff',), to=(1, y, 15, y+1))
+
+        # チェックあり（レ点）
+        self._checkbox_checked = tk.PhotoImage(width=16, height=16)
+        self._checkbox_checked.put(('#999999',), to=(0, 0, 16, 1))
+        self._checkbox_checked.put(('#999999',), to=(0, 15, 16, 16))
+        self._checkbox_checked.put(('#999999',), to=(0, 0, 1, 16))
+        self._checkbox_checked.put(('#999999',), to=(15, 0, 16, 16))
+        for y in range(1, 15):
+            self._checkbox_checked.put(('#ffffff',), to=(1, y, 15, y+1))
+        # レ点を描画（緑色のチェックマーク）
+        checkmark = [
+            (3, 8), (4, 9), (5, 10), (6, 11),  # 左下から
+            (7, 10), (8, 9), (9, 8), (10, 7), (11, 6), (12, 5), (13, 4)  # 右上へ
+        ]
+        for x, y in checkmark:
+            self._checkbox_checked.put(('#22aa22',), to=(x, y, x+2, y+2))
+
+        # スタイルに適用
+        style.element_create('custom.checkbox.indicator', 'image', self._checkbox_unchecked,
+                             ('selected', self._checkbox_checked))
+        style.layout('TCheckbutton', [
+            ('Checkbutton.padding', {'children': [
+                ('custom.checkbox.indicator', {'side': 'left', 'sticky': ''}),
+                ('Checkbutton.label', {'side': 'left', 'sticky': 'nswe'})
+            ], 'sticky': 'nswe'})
+        ])
+
+    def _on_tab_changed(self, event=None):
+        """タブ変更時の処理"""
+        self._apply_tab_colors()
+
+    def _apply_tab_colors(self):
+        """各タブに色を適用"""
+        # タブごとの背景色を定義（グループ別に色分け）
+        tab_colors = {
+            0: '#d4e6f1',  # 通信設定 - 青系（通信グループ）
+            1: '#d5f5e3',  # Pattern Test - 緑系（テストグループ）
+            2: '#fdebd0',  # グラフ描画 - オレンジ系（分析グループ）
+            3: '#e8daef',  # DAC操作 - 紫系（操作グループ）
+            4: '#fdebd0',  # ファイル保存 - オレンジ系（分析グループ）
+            5: '#d4e6f1',  # DMM3458A - 青系（通信グループ）
+            6: '#d4e6f1',  # スキャナー - 青系（通信グループ）
+        }
+
+        # 現在選択されているタブのインデックス
+        try:
+            selected = self.notebook.index(self.notebook.select())
+        except:
+            selected = 0
+
+        # 選択タブの色を少し濃くする
+        selected_colors = {
+            0: '#a9cce3',  # 通信設定
+            1: '#abebc6',  # Pattern Test
+            2: '#f5cba7',  # グラフ描画
+            3: '#d2b4de',  # DAC操作
+            4: '#f5cba7',  # ファイル保存
+            5: '#a9cce3',  # DMM3458A
+            6: '#a9cce3',  # スキャナー
+        }
+
+        # スタイルを動的に更新
+        style = ttk.Style()
+        if selected in selected_colors:
+            style.map('TNotebook.Tab',
+                      background=[('selected', selected_colors[selected]),
+                                  ('!selected', '#f5f5f5')])
+
     def create_menu(self):
         """メニューバーを作成"""
         menubar = tk.Menu(self)
