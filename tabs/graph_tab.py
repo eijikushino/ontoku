@@ -553,7 +553,7 @@ class GraphTab(ttk.Frame):
         self.temp_settings_window.title("温特グラフ詳細設定")
         # 画面右端に配置（コンパクトなサイズ）
         screen_width = self.temp_settings_window.winfo_screenwidth()
-        self.temp_settings_window.geometry(f"430x600+{screen_width - 460}+50")
+        self.temp_settings_window.geometry(f"430x620+{screen_width - 460}+50")
         self.temp_settings_window.resizable(False, False)
 
         # 選択されたキーを保存
@@ -656,6 +656,10 @@ class GraphTab(ttk.Frame):
         ttk.Checkbutton(arrow_frame, text="温度区間矢印を表示",
                         variable=self.show_temp_arrows_var,
                         command=self._on_temp_arrow_setting_changed).pack(anchor=tk.W)
+
+        # 単位説明
+        ttk.Label(arrow_frame, text="※単位: Div（1Div = 10分）",
+                  font=("", 8)).pack(anchor=tk.W)
 
         # Div範囲入力（23℃、28℃、18℃を横並び）
         div_row = ttk.Frame(arrow_frame)
@@ -1031,24 +1035,16 @@ class GraphTab(ttk.Frame):
         """表示している温特グラフを全て閉じる"""
         import matplotlib.pyplot as plt
 
-        graphs_closed = False
-
         if hasattr(self, 'temp_graph_all_info') and self.temp_graph_all_info:
             for calc_info in self.temp_graph_all_info.values():
                 fig = calc_info.get('figure')
                 if fig:
                     try:
                         plt.close(fig)
-                        graphs_closed = True
                     except Exception:
                         pass
                     finally:
                         calc_info['figure'] = None
-
-        if graphs_closed:
-            messagebox.showinfo("完了", "表示中の温特グラフをすべて閉じました。")
-        else:
-            messagebox.showinfo("情報", "表示中の温特グラフはありません。")
 
     def _get_unique_png_filename(self, folder_path, base_filename):
         """同名ファイルが存在する場合、連番を付けた別名を返す"""
