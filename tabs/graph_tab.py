@@ -705,6 +705,8 @@ class GraphTab(ttk.Frame):
         # 閉じるボタン
         btn_frame = ttk.Frame(main_frame)
         btn_frame.pack(fill=tk.X, pady=(5, 0))
+        ttk.Button(btn_frame, text="温特グラフを全て閉じる",
+                   command=self._close_all_temp_graphs).pack(side=tk.LEFT)
         ttk.Button(btn_frame, text="閉じる",
                    command=self.temp_settings_window.destroy).pack(side=tk.RIGHT)
 
@@ -1024,6 +1026,29 @@ class GraphTab(ttk.Frame):
                 messagebox.showinfo("成功", msg)
         else:
             messagebox.showerror("エラー", "保存に失敗しました:\n" + "\n".join(errors))
+
+    def _close_all_temp_graphs(self):
+        """表示している温特グラフを全て閉じる"""
+        import matplotlib.pyplot as plt
+
+        graphs_closed = False
+
+        if hasattr(self, 'temp_graph_all_info') and self.temp_graph_all_info:
+            for calc_info in self.temp_graph_all_info.values():
+                fig = calc_info.get('figure')
+                if fig:
+                    try:
+                        plt.close(fig)
+                        graphs_closed = True
+                    except Exception:
+                        pass
+                    finally:
+                        calc_info['figure'] = None
+
+        if graphs_closed:
+            messagebox.showinfo("完了", "表示中の温特グラフをすべて閉じました。")
+        else:
+            messagebox.showinfo("情報", "表示中の温特グラフはありません。")
 
     def _get_unique_png_filename(self, folder_path, base_filename):
         """同名ファイルが存在する場合、連番を付けた別名を返す"""
