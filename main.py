@@ -80,11 +80,19 @@ class MainApplication(tk.Tk):
         style.configure('TCheckbutton', background=bg_color)
         style.configure('TRadiobutton', background=bg_color)
 
-        # ボタンを濃い灰色で目立たせる
-        style.configure('TButton', background='#c0c0c0', padding=[8, 4])
+        # ボタンを濃い灰色で目立たせる（浮いた立体感）
+        style.configure('TButton',
+                        background='#c0c0c0',
+                        padding=[4, 2],
+                        relief='raised',
+                        borderwidth=2,
+                        lightcolor='#e8e8e8',
+                        darkcolor='#808080')
         style.map('TButton',
-                  background=[('active', '#a8a8a8'), ('pressed', '#909090')],
-                  relief=[('pressed', 'sunken')])
+                  background=[('active', '#b0b0b0'), ('pressed', '#a0a0a0')],
+                  relief=[('pressed', 'sunken')],
+                  lightcolor=[('pressed', '#808080')],
+                  darkcolor=[('pressed', '#e8e8e8')])
 
         # タブ全体のパディングを調整
         style.configure('TNotebook.Tab', padding=[12, 6])
