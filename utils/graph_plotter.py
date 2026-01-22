@@ -1031,8 +1031,12 @@ class LSBGraphPlotter:
         ax2.set_ylim(-8, 8)  # 温度軸は±8℃固定
         ax2.set_yticks(np.arange(-8, 10, 2))  # 2℃ごとに目盛り
 
-        # タイトル
-        fig.suptitle(f'1PB397MK2DFH_{serial} {pole} 温度特性試験結果')
+        # タイトル（serialがDFHで始まる場合は重複を避ける）
+        if serial.upper().startswith('DFH'):
+            title_prefix = '1PB397MK2'
+        else:
+            title_prefix = '1PB397MK2DFH_'
+        fig.suptitle(f'{title_prefix}{serial} {pole} 温度特性試験結果')
 
         # 温度区間の矢印を描画
         if show_temp_arrows:
@@ -1122,13 +1126,15 @@ class LSBGraphPlotter:
                     pass
 
         # 温度データを測定順に対応させる
-        total_measurement_points = len(measurement_times)
         total_temp_points = len(temp_csv_data)
 
-        if total_measurement_points == 0 or total_temp_points == 0:
+        if total_temp_points == 0:
             return [], []
 
-        # 温度データを辞書に格納（測定順 → 温度）
+        # 温度CSVの1列目がタイムスタンプか番号かを判定
+        is_timestamp = self._is_timestamp_column(temp_csv_data, index_column)
+
+        # 温度データを辞書に格納（測定順/タイムスタンプ → 温度）
         temp_dict = {}
         for row in temp_csv_data:
             try:
@@ -1141,22 +1147,78 @@ class LSBGraphPlotter:
             except (ValueError, KeyError):
                 continue
 
-        # 測定点数と温度点数が同じ場合、1:1で対応
-        if total_measurement_points == total_temp_points:
-            for i, elapsed_min in enumerate(measurement_times):
-                idx = i + 1  # 測定順は1から始まる
-                if idx in temp_dict:
-                    elapsed_times.append(elapsed_min)
-                    temp_values.append(temp_dict[idx])
+        if is_timestamp:
+            # タイムスタンプの場合、測定CSVの経過時間を使用
+            total_measurement_points = len(measurement_times)
+            if total_measurement_points > 0:
+                # 測定点数と温度点数が同じ場合、1:1で対応
+                if total_measurement_points == total_temp_points:
+                    for i, elapsed_min in enumerate(measurement_times):
+                        idx = i + 1  # 測定順は1から始まる
+                        if idx in temp_dict:
+                            elapsed_times.append(elapsed_min)
+                            temp_values.append(temp_dict[idx])
+                else:
+                    # 点数が異なる場合も測定順で対応（存在する分だけ）
+                    for i, elapsed_min in enumerate(measurement_times):
+                        idx = i + 1
+                        if idx in temp_dict:
+                            elapsed_times.append(elapsed_min)
+                            temp_values.append(temp_dict[idx])
         else:
-            # 点数が異なる場合も測定順で対応（存在する分だけ）
-            for i, elapsed_min in enumerate(measurement_times):
-                idx = i + 1
-                if idx in temp_dict:
-                    elapsed_times.append(elapsed_min)
-                    temp_values.append(temp_dict[idx])
+            # 番号の場合、10分あたり100点 = 1点あたり0.1分として計算
+            for idx in sorted(temp_dict.keys()):
+                elapsed_min = (idx - 1) * 0.1  # 番号1が0分からスタート
+                elapsed_times.append(elapsed_min)
+                temp_values.append(temp_dict[idx])
 
         return elapsed_times, temp_values
+
+    def _is_timestamp_column(self, temp_csv_data, index_column):
+        """
+        温度CSVの1列目がタイムスタンプかどうかを判定
+
+        Args:
+            temp_csv_data: 温度CSVデータ
+            index_column: 1列目のカラム名
+
+        Returns:
+            bool: タイムスタンプならTrue、番号ならFalse
+        """
+        if not temp_csv_data or not index_column:
+            return False
+
+        # 最初の数行の値をチェック
+        sample_values = []
+        for i, row in enumerate(temp_csv_data[:10]):
+            try:
+                val_str = row.get(index_column, '').strip()
+                if val_str:
+                    sample_values.append(val_str)
+            except:
+                continue
+
+        if not sample_values:
+            return False
+
+        # 判定1: 日時フォーマットを含むか（:や-が含まれていればタイムスタンプ）
+        for val in sample_values:
+            if ':' in val or '-' in val:
+                return True
+
+        # 判定2: 連続した小さい整数（1, 2, 3...）なら番号
+        try:
+            int_values = [int(v) for v in sample_values]
+            # 最初の値が1〜10で、連続しているなら番号と判断
+            if int_values[0] <= 10:
+                is_sequential = all(int_values[i] == int_values[0] + i for i in range(len(int_values)))
+                if is_sequential:
+                    return False
+        except ValueError:
+            pass
+
+        # デフォルトはタイムスタンプとして扱う
+        return True
 
     def _format_time_axis_10min(self, ax, max_minutes):
         """

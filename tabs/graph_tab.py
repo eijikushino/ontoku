@@ -1397,7 +1397,11 @@ class GraphTab(ttk.Frame):
                 continue
 
             code_data = self._organize_sections_by_code(sections)
-            unit_name = f"1PB397MK2\nDFH_{serial}\n{pole}"
+            # DFH重複防止: serialが既にDFHで始まる場合はそのまま使用
+            if serial.upper().startswith('DFH'):
+                unit_name = f"1PB397MK2\n{serial}\n{pole}"
+            else:
+                unit_name = f"1PB397MK2\nDFH_{serial}\n{pole}"
             unit_start_row = row_idx
 
             # フルスケール計算
@@ -1589,7 +1593,11 @@ class GraphTab(ttk.Frame):
                 continue
 
             code_data = self._organize_sections_by_code(sections)
-            unit_name = f"1PB397MK2\nDFH_{serial}\n{pole}"
+            # DFH重複防止: serialが既にDFHで始まる場合はそのまま使用
+            if serial.upper().startswith('DFH'):
+                unit_name = f"1PB397MK2\n{serial}\n{pole}"
+            else:
+                unit_name = f"1PB397MK2\nDFH_{serial}\n{pole}"
 
             # 23℃のフルスケール電圧範囲
             fffff_23 = code_data.get('FFFFF', {}).get(23, {}).get('voltage')
@@ -1763,7 +1771,11 @@ class GraphTab(ttk.Frame):
             # コードごとにデータを整理（FFFFF, 80000, 00000）
             code_data = self._organize_sections_by_code(sections)
 
-            unit_name = f"1PB397MK2\nDFH_{serial}\n{pole}"
+            # DFH重複防止: serialが既にDFHで始まる場合はそのまま使用
+            if serial.upper().startswith('DFH'):
+                unit_name = f"1PB397MK2\n{serial}\n{pole}"
+            else:
+                unit_name = f"1PB397MK2\nDFH_{serial}\n{pole}"
             unit_row_start = row_idx
 
             # 23℃のフルスケール電圧範囲を計算
@@ -1910,7 +1922,11 @@ class GraphTab(ttk.Frame):
                 continue
 
             code_data = self._organize_sections_by_code(sections)
-            unit_name = f"1PB397MK2\nDFH_{serial}\n{pole}"
+            # DFH重複防止: serialが既にDFHで始まる場合はそのまま使用
+            if serial.upper().startswith('DFH'):
+                unit_name = f"1PB397MK2\n{serial}\n{pole}"
+            else:
+                unit_name = f"1PB397MK2\nDFH_{serial}\n{pole}"
             unit_row_start = row_idx
 
             # 23℃のフルスケール電圧範囲を計算

@@ -384,7 +384,7 @@ class MeasurementWindow(tk.Toplevel):
             self.after(100, lambda: self.do_one_measurement(selected_defs, next_idx, next_pole))
             return
         
-        self.update_display(def_info, pole, channel)
+        # update_displayはスキャナー切替完了後に呼ぶ（計測値とのずれ防止）
         self.execute_measurement(selected_defs, def_index, pole, def_info, channel)
     
     def update_display(self, def_info, pole, channel):
@@ -403,6 +403,13 @@ class MeasurementWindow(tk.Toplevel):
 
         ch_number = channel.replace("CH", "")
         channel_addr = f"@{self.scanner_slot}{ch_number}"
+
+        # キューをクリア（古い結果を破棄して計測値ずれを防止）
+        while not self.scanner_queue.empty():
+            try:
+                self.scanner_queue.get_nowait()
+            except queue.Empty:
+                break
 
         # スキャナー切替開始時刻を記録
         self._scanner_start_time = time_module.time()
@@ -509,6 +516,8 @@ class MeasurementWindow(tk.Toplevel):
 
                 self.log(f"スキャナー切替OK: {def_info['name']} {pole}", "SUCCESS")
 
+                # DEF/Pole/CHの表示更新は計測完了時に行う（_check_dmm_result内）
+
                 # 詳細モードの場合、スキャナー切替時間を表示
                 if self.detail_mode_var.get():
                     timing = result.get('timing', {})
@@ -533,6 +542,13 @@ class MeasurementWindow(tk.Toplevel):
     def do_dmm_measurement(self, selected_defs, def_index, pole, def_info):
         """DMM計測（非同期版）- 別スレッドで実行してUIをブロックしない"""
         import time as time_module
+
+        # キューをクリア（古い結果を破棄して計測値ずれを防止）
+        while not self.dmm_queue.empty():
+            try:
+                self.dmm_queue.get_nowait()
+            except queue.Empty:
+                break
 
         # 計測開始時刻を記録
         self._dmm_start_time = time_module.time()
@@ -598,6 +614,12 @@ class MeasurementWindow(tk.Toplevel):
 
             if result['success']:
                 value = result['response'].strip()
+                # 計測完了時にDEF/Pole/CHも再表示（表示ずれ防止）
+                self.def_label.config(text=def_info['name'])
+                self.pole_label.config(text=pole)
+                channel = def_info['pos_channel'] if pole == "Pos" else def_info['neg_channel']
+                ch_number = channel.replace("CH", "")
+                self.channel_label.config(text=f"@{self.scanner_slot}{ch_number}")
                 self.measurement_label.config(text=f"{value} V")
                 self.measurement_count += 1
                 self.count_label.config(text=f"計測回数: {self.measurement_count}")
