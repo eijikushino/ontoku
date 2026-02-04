@@ -9,6 +9,7 @@ from tabs.scanner_tab import ScannerTab
 from gpib_controller import GPIBController
 from tabs.dmm3458a_tab import DMM3458ATab
 from serial_manager import SerialManager
+from about_dialog import show_about_dialog
 
 class MainApplication(tk.Tk):
     def __init__(self):
@@ -276,19 +277,7 @@ class MainApplication(tk.Tk):
     
     def show_about(self):
         """バージョン情報を表示"""
-        about_window = tk.Toplevel(self)
-        about_window.title("バージョン情報")
-        about_window.geometry("300x150")
-        about_window.resizable(False, False)
-        
-        ttk.Label(about_window, text="DEF Command Set App", 
-                  font=("", 12, "bold")).pack(pady=5)
-        ttk.Label(about_window, text="Version 1.27").pack(pady=3)
-        ttk.Label(about_window, text="・パターン試験").pack(pady=1)
-        ttk.Label(about_window, text="・温特グラフ表示").pack(pady=1)
-        
-        ttk.Button(about_window, text="OK", 
-                   command=about_window.destroy).pack(pady=10)
+        show_about_dialog(self)
     
     def on_closing(self):
         """アプリケーション終了時の処理"""
