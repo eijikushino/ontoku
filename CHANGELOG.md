@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.29] - 2026-02-09
+### 変更
+- スキャナー切替方式をcpon方式に変更
+  - 個別OPEN (@1xx) から :system:cpon（スロット全チャンネルリセット）に統一
+  - Excelマクロ（DacTestBench）と同じ方式で確実にクリーンな状態を保証
+  - 計測開始時・切替時・停止時の3箇所を変更
+
 ## [1.28] - 2026-02-04
 ### 追加
 - バージョン情報ダイアログに詳細な変更履歴表示を追加

@@ -287,31 +287,15 @@ class MeasurementWindow(tk.Toplevel):
             if not messagebox.askyesno("警告", "DMM設定の取得に失敗しました。計測を続行しますか?"):
                 return
         
-        # 【単一選択の初期化】計測開始時に使用する全チャンネルをOPEN
-        # これにより計測開始時点で複数チャンネルがCLOSEされている状態を防ぐ
+        # 計測開始時にスロット全チャンネルをOPEN（cponでリセット）
         orig_timeout = self.gpib_scanner.instrument.timeout
         self.gpib_scanner.instrument.timeout = 5000
 
         try:
-            for def_entry in selected_defs:
-                pos_ch = def_entry['pos_channel']
-                neg_ch = def_entry['neg_channel']
-
-                if pos_ch != "ー" and pos_ch != "":
-                    pos_num = pos_ch.replace("CH", "")
-                    pos_addr = f"@{self.scanner_slot}{pos_num}"
-                    self.gpib_scanner.write(f"OPEN ({pos_addr})")
-                    time.sleep(0.05)
-
-                if neg_ch != "ー" and neg_ch != "":
-                    neg_num = neg_ch.replace("CH", "")
-                    neg_addr = f"@{self.scanner_slot}{neg_num}"
-                    self.gpib_scanner.write(f"OPEN ({neg_addr})")
-                    time.sleep(0.05)
+            self.gpib_scanner.write(f":system:cpon {self.scanner_slot}")
         finally:
             self.gpib_scanner.instrument.timeout = orig_timeout
 
-        # 【単一選択】CLOSEチャンネル追跡をリセット（全てOPEN状態から開始）
         self.last_closed_channel = None
         
         self.is_measuring = True
@@ -428,10 +412,8 @@ class MeasurementWindow(tk.Toplevel):
     def _scanner_switch_worker(self, channel_addr, def_info, pole):
         """スキャナー切り替えのワーカースレッド
 
-        【単一選択の保証】
-        - 常に1つのチャンネルのみCLOSE状態を維持
-        - 新しいチャンネルをCLOSEする前に、前回のチャンネルを必ずOPEN
-        - OPENが失敗した場合はCLOSEを実行しない（複数CLOSE防止）
+        cponで全チャンネルOPEN後、対象チャンネルのみCLOSE
+        （Excelマクロと同じ方式で確実にクリーンな状態を保証）
         """
         result = {
             'success': False,
@@ -448,26 +430,22 @@ class MeasurementWindow(tk.Toplevel):
                 switch_delay = self.switch_delay_sec.get()
 
                 try:
-                    # 【単一選択】前回CLOSEしたチャンネルをOPEN（複数CLOSE防止）
-                    if self.last_closed_channel is not None:
-                        # OPENコマンドの時間計測
-                        open_start = time.time()
-                        open_success, _ = self.gpib_scanner.write(f"OPEN ({self.last_closed_channel})")
-                        open_elapsed = time.time() - open_start
-                        result['timing']['open'] = open_elapsed
+                    # cponで全チャンネルOPEN（Excelマクロと同じ方式）
+                    open_start = time.time()
+                    open_success, _ = self.gpib_scanner.write(f":system:cpon {self.scanner_slot}")
+                    open_elapsed = time.time() - open_start
+                    result['timing']['open'] = open_elapsed
 
-                        wait_time = switch_delay / 2
-                        result['detail'].append(f"OPEN ({self.last_closed_channel}): {open_elapsed:.3f}秒 → 待機 {wait_time:.2f}秒")
-                        time.sleep(wait_time)
+                    wait_time = switch_delay / 2
+                    result['detail'].append(f"cpon {self.scanner_slot}: {open_elapsed:.3f}秒 → 待機 {wait_time:.2f}秒")
+                    time.sleep(wait_time)
 
-                        # OPENが失敗した場合、CLOSEを実行しない（複数チャンネルCLOSE防止）
-                        if not open_success:
-                            result['error'] = 'open_previous_failed'
-                            self.scanner_queue.put(result)
-                            return
+                    if not open_success:
+                        result['error'] = 'cpon_failed'
+                        self.scanner_queue.put(result)
+                        return
 
-                    # 【単一選択】新しいチャンネルをCLOSE（常に1つだけ）
-                    # CLOSEコマンドの時間計測
+                    # 新しいチャンネルをCLOSE
                     close_start = time.time()
                     success, _ = self.gpib_scanner.write(f"CLOSE ({channel_addr})")
                     close_elapsed = time.time() - close_start
@@ -486,12 +464,7 @@ class MeasurementWindow(tk.Toplevel):
         self.scanner_queue.put(result)
 
     def _check_scanner_result(self, selected_defs, def_index, pole, def_info):
-        """スキャナー切り替え結果をチェック
-
-        【単一選択の管理】
-        - 成功時: last_closed_channelを更新（次回OPEN対象として記憶）
-        - 失敗時: 計測停止（不整合な状態を防ぐ）
-        """
+        """スキャナー切り替え結果をチェック"""
         import time as time_module
 
         if not self.is_measuring:
@@ -506,10 +479,9 @@ class MeasurementWindow(tk.Toplevel):
                 scanner_elapsed = time_module.time() - self._scanner_start_time
 
             if result['success']:
-                # 【単一選択】今回CLOSEしたチャンネルを記憶（次回の切替時にOPENする対象）
                 self.last_closed_channel = result['channel_addr']
 
-                # 詳細モードの場合、OPEN/CLOSEの詳細をログ出力
+                # 詳細モードの場合、cpon/CLOSEの詳細をログ出力
                 if self.detail_mode_var.get() and result.get('detail'):
                     for detail in result['detail']:
                         self.log(f"  {detail}", "INFO")
@@ -524,7 +496,7 @@ class MeasurementWindow(tk.Toplevel):
                     open_time = timing.get('open', 0)
                     close_time = timing.get('close', 0)
                     gpib_total = open_time + close_time
-                    self.log(f"  スキャナー切替時間: {scanner_elapsed:.3f}秒 (GPIB: OPEN={open_time:.3f}秒 + CLOSE={close_time:.3f}秒 = {gpib_total:.3f}秒)", "INFO")
+                    self.log(f"  スキャナー切替時間: {scanner_elapsed:.3f}秒 (GPIB: cpon={open_time:.3f}秒 + CLOSE={close_time:.3f}秒 = {gpib_total:.3f}秒)", "INFO")
 
                 # スキャナー切替時間の1/2: CLOSE後、DMM計測開始までの待ち時間
                 delay_ms = int(self.switch_delay_sec.get() / 2 * 1000)
@@ -835,39 +807,19 @@ class MeasurementWindow(tk.Toplevel):
         pass
             
     def open_all_used_channels(self):
-        """使用したチャンネルを全てOPEN
+        """全チャンネルをOPEN（cponでスロットリセット）
 
-        【単一選択のクリーンアップ】
-        計測停止時に呼ばれ、使用した全チャンネルをOPENする
-        これにより次回計測開始時にクリーンな状態から開始できる
+        計測停止時に呼ばれ、cponで全チャンネルをOPENする
         """
         try:
-            selected_defs = self.get_selected_defs()
-            if not selected_defs:
-                return
-
             orig_timeout = self.gpib_scanner.instrument.timeout
             self.gpib_scanner.instrument.timeout = 5000
 
             try:
-                for def_entry in selected_defs:
-                    pos_ch = def_entry['pos_channel']
-                    neg_ch = def_entry['neg_channel']
-
-                    if pos_ch != "ー" and pos_ch != "":
-                        pos_num = pos_ch.replace("CH", "")
-                        pos_addr = f"@{self.scanner_slot}{pos_num}"
-                        self.gpib_scanner.write(f"OPEN ({pos_addr})")
-                        time.sleep(0.05)
-
-                    if neg_ch != "ー" and neg_ch != "":
-                        neg_num = neg_ch.replace("CH", "")
-                        neg_addr = f"@{self.scanner_slot}{neg_num}"
-                        self.gpib_scanner.write(f"OPEN ({neg_addr})")
-                        time.sleep(0.05)
+                self.gpib_scanner.write(f":system:cpon {self.scanner_slot}")
             finally:
                 self.gpib_scanner.instrument.timeout = orig_timeout
-                
+
         except Exception as e:
             self.log(f"チャンネルOPEN時エラー: {e}", "ERROR")
             
