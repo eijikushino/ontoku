@@ -36,7 +36,14 @@ class TestTab(ttk.Frame):
 
         # 選択していないDataSetにCenterコードを送信するオプション（デフォルト: True）
         self.send_opposite_center = tk.BooleanVar(value=True)
-        
+
+        # 開始前待機時間(分)
+        self.start_wait_min = tk.DoubleVar(value=0.0)
+        self.is_countdown = False
+
+        # DMM/スキャナー未接続でもパターン実行を許可するオプション
+        self.allow_no_connection = tk.BooleanVar(value=False)
+
         # 実行状況管理用
         self.current_pattern_index = -1  # -1で初期化（未実行状態）
         self.pattern_start_time = 0
@@ -120,7 +127,28 @@ class TestTab(ttk.Frame):
         
         table_frame.update_idletasks()
         table_canvas.configure(scrollregion=table_canvas.bbox("all"))
-        
+
+        # ----- パターン保存/読込エリア(パターン15の下) -----
+        file_frame = ttk.LabelFrame(left_container, text="パターン保存/読込", padding=5)
+        file_frame.pack(fill=tk.X, pady=(5, 0))
+
+        # 1行目: 保存先フォルダ
+        folder_frame = ttk.Frame(file_frame)
+        folder_frame.pack(fill=tk.X, pady=(0, 3))
+        ttk.Label(folder_frame, text="保存先:").pack(side=tk.LEFT, padx=(0, 5))
+        ttk.Entry(folder_frame, textvariable=self.save_folder, width=25).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 5))
+        ttk.Button(folder_frame, text="参照", command=self.select_folder, width=6).pack(side=tk.LEFT)
+
+        # 2行目: ファイル名 + 保存/読込ボタン
+        name_btn_frame = ttk.Frame(file_frame)
+        name_btn_frame.pack(fill=tk.X)
+        ttk.Label(name_btn_frame, text="ファイル名:").pack(side=tk.LEFT, padx=(0, 5))
+        self.filename_entry = ttk.Entry(name_btn_frame, width=20)
+        self.filename_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 5))
+        self.filename_entry.insert(0, self.default_filename)
+        ttk.Button(name_btn_frame, text="保存", command=self.save_pattern, width=6).pack(side=tk.LEFT, padx=(0, 3))
+        ttk.Button(name_btn_frame, text="読込", command=self.load_pattern, width=6).pack(side=tk.LEFT)
+
         # ----- 実行状況表示エリアとDEF選択エリア(テーブルの下) -----
         status_def_container = ttk.Frame(left_container)
         status_def_container.pack(fill=tk.X, pady=(10, 0))
@@ -243,31 +271,6 @@ class TestTab(ttk.Frame):
         right_frame = ttk.Frame(main_container)
         right_frame.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
         
-        # 保存/読込フレーム
-        file_frame = ttk.LabelFrame(right_frame, text="パターン保存/読込", padding=10)
-        file_frame.pack(fill=tk.X, pady=(0, 10))
-        
-        # 保存フォルダ選択
-        folder_frame = ttk.Frame(file_frame)
-        folder_frame.pack(fill=tk.X, pady=(0, 5))
-        ttk.Label(folder_frame, text="保存先:").pack(side=tk.LEFT, padx=(0, 5))
-        ttk.Entry(folder_frame, textvariable=self.save_folder, width=20).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 5))
-        ttk.Button(folder_frame, text="参照", command=self.select_folder, width=6).pack(side=tk.LEFT)
-        
-        # ファイル名入力
-        name_frame = ttk.Frame(file_frame)
-        name_frame.pack(fill=tk.X, pady=(0, 5))
-        ttk.Label(name_frame, text="ファイル名:").pack(side=tk.LEFT, padx=(0, 5))
-        self.filename_entry = ttk.Entry(name_frame, width=20)
-        self.filename_entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
-        self.filename_entry.insert(0, self.default_filename)  # 前回値を設定
-        
-        # 保存/読込ボタン
-        button_frame = ttk.Frame(file_frame)
-        button_frame.pack(fill=tk.X)
-        ttk.Button(button_frame, text="保存", command=self.save_pattern, width=12).pack(side=tk.LEFT, padx=(0, 5))
-        ttk.Button(button_frame, text="読込", command=self.load_pattern, width=12).pack(side=tk.LEFT)
-        
         # 制御ボタン
         control_frame = ttk.LabelFrame(right_frame, text="実行制御", padding=10)
         control_frame.pack(fill=tk.X, pady=(0, 10))
@@ -318,7 +321,32 @@ class TestTab(ttk.Frame):
             command=self.save_settings
         )
         opposite_center_cb.pack(side=tk.LEFT, padx=2)
-        
+
+        # DMM/スキャナー未接続でもパターン実行を許可するオプション
+        no_conn_frame = ttk.Frame(control_frame)
+        no_conn_frame.pack(fill=tk.X, pady=2)
+        ttk.Checkbutton(
+            no_conn_frame,
+            text="DMM/スキャナー無しで開始可能",
+            variable=self.allow_no_connection,
+            command=self.save_settings
+        ).pack(side=tk.LEFT, padx=2)
+
+        # 開始前待機時間設定
+        wait_frame = ttk.Frame(control_frame)
+        wait_frame.pack(fill=tk.X, pady=5)
+        ttk.Label(wait_frame, text="開始前待機:").pack(side=tk.LEFT, padx=2)
+        self.wait_spinbox = ttk.Spinbox(wait_frame, from_=0.0, to=60.0,
+                                         increment=0.5, format='%.1f',
+                                         textvariable=self.start_wait_min, width=5)
+        self.wait_spinbox.pack(side=tk.LEFT, padx=2)
+        ttk.Label(wait_frame, text="min").pack(side=tk.LEFT)
+
+        # 待機タイマー表示ラベル
+        self.countdown_label = ttk.Label(wait_frame, text="", font=("", 9, "bold"),
+                                          foreground="red", width=12)
+        self.countdown_label.pack(side=tk.LEFT, padx=(10, 0))
+
         # ログ表示
         log_frame = ttk.LabelFrame(right_frame, text="実行ログ", padding=10)
         log_frame.pack(fill=tk.BOTH, expand=True)
@@ -531,11 +559,18 @@ class TestTab(ttk.Frame):
     
     def start_test(self):
         """パターンテストを開始"""
-        # シリアル通信の接続確認
+        # シリアル通信の接続確認（DAC制御用、常に必須）
         if not self.serial_mgr.is_connected():
             self.log_message("シリアルポートが接続されていません", "ERROR")
             return
-        
+
+        # DMM/スキャナー接続確認（チェックボックスOFFなら必須）
+        if not self.allow_no_connection.get():
+            parent = self.winfo_toplevel()
+            if not parent.gpib_3458a.connected or not parent.gpib_3499b.connected:
+                self.log_message("DMM/スキャナーが接続されていません", "ERROR")
+                return
+
         # DEF選択状態の確認(変更部分)
         selected_defs = [i for i, var in enumerate(self.def_check_vars) if var.get()]
         if not selected_defs:
@@ -584,12 +619,47 @@ class TestTab(ttk.Frame):
         self.log_message(f"対象DEF: {selected_defs}", "INFO")
         self.log_message("=" * 40, "INFO")
         
-        # 時間表示更新を開始(100msごと)
-        self.update_time_display()
-        
-        # パターンを順次実行
-        self.execute_patterns(enabled_patterns, 0)
+        # 開始前待機(分→秒に変換)
+        wait_sec = int(self.start_wait_min.get() * 60)
+        if wait_sec > 0:
+            self.is_countdown = True
+            wait_min = self.start_wait_min.get()
+            self.log_message(f"開始前待機: {wait_min:.1f}分 ({wait_sec}秒)", "INFO")
+            self._start_countdown(wait_sec, enabled_patterns)
+        else:
+            # 時間表示更新を開始(100msごと)
+            self.update_time_display()
+            # パターンを順次実行
+            self.execute_patterns(enabled_patterns, 0)
     
+    def _start_countdown(self, remaining, enabled_patterns):
+        """開始前カウントダウン"""
+        if not self.is_running:
+            self.is_countdown = False
+            self.countdown_label.config(text="")
+            self.finish_test()
+            return
+
+        if remaining <= 0:
+            self.is_countdown = False
+            self.countdown_label.config(text="")
+            self.current_pattern_label.config(text="実行開始")
+            self.log_message("待機完了、パターン実行を開始します", "INFO")
+            # 時間表示更新を開始(100msごと)
+            self.update_time_display()
+            self.execute_patterns(enabled_patterns, 0)
+            return
+
+        # 待機中表示(mm:ss形式)
+        mins = remaining // 60
+        secs = remaining % 60
+        timer_text = f"{mins:02d}:{secs:02d}"
+        self.current_pattern_label.config(text=f"待機中")
+        self.countdown_label.config(text=f"残り {timer_text}")
+
+        # 1秒後に再呼び出し
+        self.after(1000, lambda: self._start_countdown(remaining - 1, enabled_patterns))
+
     def execute_patterns(self, patterns, current_index):
         """パターンを順次実行(再帰的)"""
         if not self.is_running or current_index >= len(patterns):
@@ -838,6 +908,8 @@ class TestTab(ttk.Frame):
         self.is_running = False
         self.is_holding = False
         self.skip_requested = False
+        self.is_countdown = False
+        self.countdown_label.config(text="")
         
         # ★★★ テスト終了時に current_pattern_index をリセット ★★★
         self.current_pattern_index = -1

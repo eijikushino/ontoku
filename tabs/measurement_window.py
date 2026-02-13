@@ -280,10 +280,14 @@ class MeasurementWindow(tk.Toplevel):
         """計測開始"""
         self.log("=== 計測開始 ===", "INFO")
         
+        # DMM/スキャナー接続チェック（test_tabの「DMM/スキャナー無しで開始可能」で回避可能）
         if not self.gpib_dmm.connected or not self.gpib_scanner.connected:
-            messagebox.showerror("エラー", "機器が接続されていません")
-            self.log("計測開始失敗: 機器未接続", "ERROR")
-            return
+            if not self.test_tab.allow_no_connection.get():
+                messagebox.showerror("エラー", "DMM/スキャナーが接続されていません")
+                self.log("計測開始失敗: 機器未接続", "ERROR")
+                return
+            else:
+                self.log("警告: DMM/スキャナー未接続で計測開始", "WARNING")
         
         selected_defs = self.get_selected_defs()
         if not selected_defs:
@@ -1028,8 +1032,11 @@ class MeasurementWindow(tk.Toplevel):
 
             # パターン実行開始を検知
             if current_pattern_running and not self.last_pattern_running_state:
-                # 計測していない場合は、まず計測を開始
-                if not self.is_measuring:
+                # DMM/スキャナー未接続の場合は計測をスキップ
+                if not self.gpib_dmm.connected or not self.gpib_scanner.connected:
+                    self.log("パターン実行開始を検知（DMM/スキャナー未接続のため計測スキップ）", "WARNING")
+                elif not self.is_measuring:
+                    # 計測していない場合は、まず計測を開始
                     self.log("パターン実行開始を検知 → 計測自動開始", "INFO")
                     self.start_measurement()
                     # start_measurementが成功したかチェック
