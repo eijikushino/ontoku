@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.31] - 2026-02-13
+### 改善
+- DAC操作タブにdef-controlスキルの機能をマージ
+  - remote/localモード切替ボタンを追加
+  - 手動コマンド入力欄を追加（DEFプレフィックスなしの生コマンド送信、Enter対応）
+  - レスポンス表示ON/OFFトグルを追加（OFF時は応答を待たず高速送信）
+  - 全コマンド送信時に[SEND]ログを表示するよう統一
+- DAC操作タブのUIレイアウト改善
+  - DEF選択を横2列レイアウトに変更（省スペース化）
+  - プリセットボタンを横並びに変更（+Full / Center / -Full）
+  - プリセット定数をモジュールレベルに集約
+
 ## [1.30] - 2026-02-13
 ### 改善
 - スキャナー切替に*OPC?ハンドシェイクを追加し、CLOSE所要時間を大幅改善
