@@ -846,7 +846,7 @@ class MeasurementWindow(tk.Toplevel):
                 # 保存先ディレクトリ
                 save_dir = config.get("save_config", {}).get("save_dir", save_dir)
                 
-                # CSVファイル名（通信1の設定）
+                # CSVファイル名（DEFシリアルの設定）
                 comm1_config = config.get("comm_profiles", {}).get("1", {})
                 file_name_with_ext = comm1_config.get("save_config", {}).get("file_name", "measurement.csv")
                 # 拡張子が付いていない場合は追加
@@ -855,7 +855,7 @@ class MeasurementWindow(tk.Toplevel):
                 else:
                     filename = file_name_with_ext
                 
-                # シリアルナンバー（通信1の設定、チェックされたDEFのみ）
+                # シリアルナンバー（DEFシリアルの設定、チェックされたDEFのみ）
                 serial_config = comm1_config.get("serial_numbers", {})
                 
                 # チェックされたDEFのみを取得

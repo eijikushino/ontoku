@@ -1,11 +1,11 @@
 {
     "gpib": {
-        "3458a_resource": "GPIB0::6::INSTR",
+        "3458a_resource": "GPIB0::22::INSTR",
         "3499b_resource": "GPIB0::9::INSTR"
     },
     "test": {
         "save_folder": "C:/Users/e-kus/Desktop/AI/ClaudeCode/温特アプリ/温特/pattern",
-        "filename": "pattern2短縮版",
+        "filename": "温特パターン",
         "def_checks": [
             true,
             true,
@@ -38,21 +38,21 @@
     "comm_profiles": {
         "1": {
             "serial_numbers": {
-                "DEF0_sn": "DFH904",
-                "DEF1_sn": "DFH002",
-                "DEF2_sn": "DFH003",
-                "DEF3_sn": "DFH111",
+                "DEF0_sn": "DFH903",
+                "DEF1_sn": "DFH906",
+                "DEF2_sn": "DFH904",
+                "DEF3_sn": "DFHK3",
                 "DEF4_sn": "DFH222",
                 "DEF5_sn": "DFH456"
             },
             "save_config": {
-                "file_name": "パターン計測確認.csv"
+                "file_name": "切替設定調査.csv"
             },
             "device_type": "main"
         }
     },
     "measurement_window": {
-        "switch_delay_sec": 1.0,
+        "switch_delay_sec": 0.4,
         "dmm_delay_sec": 1.5,
         "sync_with_pattern": true
     },

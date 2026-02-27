@@ -553,7 +553,7 @@ class GraphTab(ttk.Frame):
         self.temp_settings_window.title("温特グラフ詳細設定")
         # 画面右端に配置（コンパクトなサイズ）
         screen_width = self.temp_settings_window.winfo_screenwidth()
-        self.temp_settings_window.geometry(f"430x620+{screen_width - 460}+50")
+        self.temp_settings_window.geometry(f"430x700+{screen_width - 460}+50")
         self.temp_settings_window.resizable(False, False)
 
         # 選択されたキーを保存
@@ -571,43 +571,48 @@ class GraphTab(ttk.Frame):
         main_frame = ttk.Frame(self.temp_settings_window, padding=15)
         main_frame.pack(fill=tk.BOTH, expand=True)
 
-        # 計算結果表示エリア（POS/NEG横並び）
+        # 計算結果表示エリア（スクロール可能なリスト表示）
         calc_frame = ttk.LabelFrame(main_frame, text="LSB電圧計算結果（実測値）", padding=5)
         calc_frame.pack(fill=tk.X, pady=(0, 8))
 
-        # POS/NEG横並びフレーム
-        calc_row = ttk.Frame(calc_frame)
-        calc_row.pack(fill=tk.X)
-
-        # POS計算結果（左側・上詰め）
-        pos_frame = ttk.Frame(calc_row)
-        pos_frame.pack(side=tk.LEFT, padx=(0, 20), anchor=tk.N)
-        ttk.Label(pos_frame, text="【POS】", font=('', 9, 'bold')).pack(anchor=tk.W)
-        self.calc_pos_fffff_label = ttk.Label(pos_frame, text="+Full: ---")
-        self.calc_pos_fffff_label.pack(anchor=tk.W)
-        self.calc_pos_zero_label = ttk.Label(pos_frame, text="-Full: ---")
-        self.calc_pos_zero_label.pack(anchor=tk.W)
-        self.calc_pos_lsb_label = ttk.Label(pos_frame, text="LSB: ---")
-        self.calc_pos_lsb_label.pack(anchor=tk.W)
-
-        # NEG計算結果（右側・上詰め）
-        neg_frame = ttk.Frame(calc_row)
-        neg_frame.pack(side=tk.LEFT, anchor=tk.N)
-        ttk.Label(neg_frame, text="【NEG】", font=('', 9, 'bold')).pack(anchor=tk.W)
-        self.calc_neg_fffff_label = ttk.Label(neg_frame, text="+Full: ---")
-        self.calc_neg_fffff_label.pack(anchor=tk.W)
-        self.calc_neg_zero_label = ttk.Label(neg_frame, text="-Full: ---")
-        self.calc_neg_zero_label.pack(anchor=tk.W)
-        self.calc_neg_lsb_label = ttk.Label(neg_frame, text="LSB: ---")
-        self.calc_neg_lsb_label.pack(anchor=tk.W)
-        # NEG絶対値無効チェックボックス（NEGの下に配置）
+        # NEG絶対値無効チェックボックス（計算結果の上に配置）
+        neg_no_abs_row = ttk.Frame(calc_frame)
+        neg_no_abs_row.pack(fill=tk.X, pady=(0, 5))
         self.neg_no_abs_check = ttk.Checkbutton(
-            neg_frame,
-            text="絶対値を使用しない",
+            neg_no_abs_row,
+            text="NEG: 絶対値を使用しない",
             variable=self.neg_no_abs_var,
             command=self._on_neg_no_abs_changed
         )
         self.neg_no_abs_check.pack(anchor=tk.W)
+
+        # スクロール可能なフレーム（Canvasを使用）
+        calc_canvas_frame = ttk.Frame(calc_frame)
+        calc_canvas_frame.pack(fill=tk.BOTH, expand=True)
+
+        self.calc_canvas = tk.Canvas(calc_canvas_frame, height=120, highlightthickness=0)
+        calc_scrollbar = ttk.Scrollbar(calc_canvas_frame, orient=tk.VERTICAL, command=self.calc_canvas.yview)
+        self.calc_scrollable_frame = ttk.Frame(self.calc_canvas)
+
+        self.calc_scrollable_frame.bind(
+            "<Configure>",
+            lambda e: self.calc_canvas.configure(scrollregion=self.calc_canvas.bbox("all"))
+        )
+
+        self.calc_canvas.create_window((0, 0), window=self.calc_scrollable_frame, anchor=tk.NW)
+        self.calc_canvas.configure(yscrollcommand=calc_scrollbar.set)
+
+        self.calc_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        calc_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+
+        # マウスホイールでスクロール
+        def _on_mousewheel(event):
+            self.calc_canvas.yview_scroll(int(-1*(event.delta/120)), "units")
+        self.calc_canvas.bind_all("<MouseWheel>", _on_mousewheel)
+
+        # 初期表示用ラベル
+        self.calc_result_labels = {}
+        self._show_no_data_message()
 
         # Y軸(LSB)設定エリア
         yaxis_frame = ttk.LabelFrame(main_frame, text="Y軸(LSB)設定", padding=5)
@@ -847,62 +852,92 @@ class GraphTab(ttk.Frame):
             messagebox.showwarning("警告",
                 "LSB電圧計算に必要なデータが不足しています:\n" + "\n".join(missing_data))
 
-        # 計算結果を更新（POS/NEG別）
-        self._update_calc_labels(pos_calc_info, neg_calc_info)
+        # 計算結果を更新（全DEF対応）
+        self._update_calc_labels()
 
-    def _update_calc_labels(self, pos_calc_info, neg_calc_info):
-        """計算結果ラベルを更新（POS/NEG別、表示は小数第5位まで）"""
-        # POS計算結果
-        if pos_calc_info:
-            fffff_avg = pos_calc_info.get('fffff_avg')
-            zero_avg = pos_calc_info.get('00000_avg')
-            lsb_voltage = pos_calc_info.get('lsb_voltage')
+    def _show_no_data_message(self):
+        """データなしメッセージを表示"""
+        # 既存のラベルをクリア
+        for widget in self.calc_scrollable_frame.winfo_children():
+            widget.destroy()
+        self.calc_result_labels = {}
 
+        # メッセージ表示
+        ttk.Label(self.calc_scrollable_frame, text="グラフを表示すると計算結果が表示されます",
+                  foreground='gray').pack(anchor=tk.W, padx=5, pady=10)
+
+    def _update_calc_labels(self):
+        """計算結果ラベルを更新（全DEF対応、スクロール可能リスト表示）"""
+        # 既存のラベルをクリア
+        for widget in self.calc_scrollable_frame.winfo_children():
+            widget.destroy()
+        self.calc_result_labels = {}
+
+        # temp_graph_all_infoが存在しない、または空の場合
+        if not hasattr(self, 'temp_graph_all_info') or not self.temp_graph_all_info:
+            self._show_no_data_message()
+            return
+
+        # 選択順を保持するためtemp_graph_selected_keysの順序で表示
+        if hasattr(self, 'temp_graph_selected_keys'):
+            ordered_keys = [key for key in self.temp_graph_selected_keys if key in self.temp_graph_all_info]
+        else:
+            ordered_keys = list(self.temp_graph_all_info.keys())
+
+        if not ordered_keys:
+            self._show_no_data_message()
+            return
+
+        # 各DEFの計算結果を表示
+        for key in ordered_keys:
+            calc_info = self.temp_graph_all_info[key]
+            serial, pole = key.rsplit('_', 1)
+
+            # DEFごとのフレーム
+            def_frame = ttk.Frame(self.calc_scrollable_frame)
+            def_frame.pack(fill=tk.X, padx=5, pady=2)
+
+            # タイトル行（DEF名 + 極性）
+            title_label = ttk.Label(def_frame, text=f"【{serial} {pole}】", font=('', 9, 'bold'))
+            title_label.pack(anchor=tk.W)
+
+            # 計算結果行
+            result_frame = ttk.Frame(def_frame)
+            result_frame.pack(fill=tk.X, padx=10)
+
+            fffff_avg = calc_info.get('fffff_avg')
+            zero_avg = calc_info.get('00000_avg')
+            lsb_voltage = calc_info.get('lsb_voltage')
+
+            # +Full平均
             if fffff_avg is not None:
-                self.calc_pos_fffff_label.config(text=f"  +Full平均: {fffff_avg:.5f} V")
+                fffff_text = f"+Full: {fffff_avg:.5f} V"
             else:
-                self.calc_pos_fffff_label.config(text="  +Full平均: データなし")
+                fffff_text = "+Full: データなし"
+            ttk.Label(result_frame, text=fffff_text).pack(side=tk.LEFT, padx=(0, 15))
 
+            # -Full平均
             if zero_avg is not None:
-                self.calc_pos_zero_label.config(text=f"  -Full平均: {zero_avg:.5f} V")
+                zero_text = f"-Full: {zero_avg:.5f} V"
             else:
-                self.calc_pos_zero_label.config(text="  -Full平均: データなし")
+                zero_text = "-Full: データなし"
+            ttk.Label(result_frame, text=zero_text).pack(side=tk.LEFT, padx=(0, 15))
 
+            # LSB電圧
             if lsb_voltage is not None:
                 lsb_mv = lsb_voltage * 1000  # V → mV
-                self.calc_pos_lsb_label.config(text=f"  LSB電圧: {lsb_mv:.5f} mV")
+                lsb_text = f"LSB: {lsb_mv:.5f} mV"
             else:
-                self.calc_pos_lsb_label.config(text="  LSB電圧: 計算不可")
-        else:
-            self.calc_pos_fffff_label.config(text="  +Full平均: ---")
-            self.calc_pos_zero_label.config(text="  -Full平均: ---")
-            self.calc_pos_lsb_label.config(text="  LSB電圧: ---")
+                lsb_text = "LSB: 計算不可"
+            ttk.Label(result_frame, text=lsb_text).pack(side=tk.LEFT)
 
-        # NEG計算結果
-        if neg_calc_info:
-            fffff_avg = neg_calc_info.get('fffff_avg')
-            zero_avg = neg_calc_info.get('00000_avg')
-            lsb_voltage = neg_calc_info.get('lsb_voltage')
+            # 区切り線（最後以外）
+            if key != ordered_keys[-1]:
+                ttk.Separator(self.calc_scrollable_frame, orient=tk.HORIZONTAL).pack(fill=tk.X, padx=5, pady=3)
 
-            if fffff_avg is not None:
-                self.calc_neg_fffff_label.config(text=f"  +Full平均: {fffff_avg:.5f} V")
-            else:
-                self.calc_neg_fffff_label.config(text="  +Full平均: データなし")
-
-            if zero_avg is not None:
-                self.calc_neg_zero_label.config(text=f"  -Full平均: {zero_avg:.5f} V")
-            else:
-                self.calc_neg_zero_label.config(text="  -Full平均: データなし")
-
-            if lsb_voltage is not None:
-                lsb_mv = lsb_voltage * 1000  # V → mV
-                self.calc_neg_lsb_label.config(text=f"  LSB電圧: {lsb_mv:.5f} mV")
-            else:
-                self.calc_neg_lsb_label.config(text="  LSB電圧: 計算不可")
-        else:
-            self.calc_neg_fffff_label.config(text="  +Full平均: ---")
-            self.calc_neg_zero_label.config(text="  -Full平均: ---")
-            self.calc_neg_lsb_label.config(text="  LSB電圧: ---")
+        # スクロール領域を更新
+        self.calc_scrollable_frame.update_idletasks()
+        self.calc_canvas.configure(scrollregion=self.calc_canvas.bbox("all"))
 
     def _redraw_temp_graph(self):
         """温特グラフを再描画"""

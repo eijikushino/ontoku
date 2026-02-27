@@ -24,7 +24,7 @@ class TestTab(ttk.Frame):
         self.is_running = False
         self.is_holding = False  # ホールド(一時停止)フラグ
         self.skip_requested = False  # スキップフラグ
-        self.def_vars = []  # DAC操作タブから共有するDEF選択状態
+        self.def_vars = []  # DEF操作タブから共有するDEF選択状態
         self.save_folder = tk.StringVar(value="")  # 保存フォルダパス
         
         # ★★★ 計測ウィンドウ管理用 ★★★
@@ -60,7 +60,7 @@ class TestTab(ttk.Frame):
         self.create_widgets()
         
     def set_def_vars(self, def_vars):
-        """DAC操作タブからDEF選択状態を共有"""
+        """DEF操作タブからDEF選択状態を共有"""
         self.def_vars = def_vars
     
     def create_widgets(self):
@@ -797,7 +797,7 @@ class TestTab(ttk.Frame):
                         hex_value = f"{hex_int:04X}"
             
             else:
-                # プリセット値の場合の処理(DAC操作タブと同じロジック)
+                # プリセット値の場合の処理(DEF操作タブと同じロジック)
                 # プリセット値の定義
                 presets = {
                     '+Full': {"P": "FFFFF", "L": "FFFF"},
@@ -878,7 +878,7 @@ class TestTab(ttk.Frame):
     
     def _read_response(self):
         """
-        レスポンスを読み取り(DAC操作タブと同じロジック)
+        レスポンスを読み取り(DEF操作タブと同じロジック)
         1文字ずつ読み取り、CR/LFで即時改行。'>'で1行入れて終了。タイムアウト3秒。
         """
         line_buffer = ""

@@ -71,9 +71,54 @@ class SerialManager:
             if self.is_connected() and self.ser.in_waiting > 0:
                 try:
                     data = self.ser.read(size).decode("utf-8", errors="ignore")
-                    #print(f"[DEBUG] read(): {repr(data)}")  # ← ここ追加
                     return data
                 except Exception as e:
                     print(f"[ERROR] read() failed: {e}")
                     return ""
             return ""
+
+    def send_command(self, cmd):
+        """コマンド送信（終端CR付き、バッファクリア後に送信）"""
+        with self.lock:
+            if self.is_connected():
+                try:
+                    self.ser.reset_input_buffer()
+                    self.ser.write((cmd + '\r').encode('utf-8'))
+                    self.ser.flush()
+                    return True
+                except Exception as e:
+                    print(f"[ERROR] send_command() failed: {e}")
+                    return False
+            return False
+
+    def send_command_with_response(self, cmd, wait_sec=0.001, read_timeout=0.015, prompt=">"):
+        """コマンド送信後、応答を受信して返す（プロンプト検出で終了）"""
+        with self.lock:
+            if not self.is_connected():
+                return None
+            try:
+                self.ser.reset_input_buffer()
+                self.ser.write((cmd + '\r').encode('utf-8'))
+                self.ser.flush()
+                time.sleep(wait_sec)
+
+                old_timeout = self.ser.timeout
+                self.ser.timeout = read_timeout
+                response_lines = []
+                while True:
+                    line = self.ser.readline().decode('utf-8', errors='ignore').strip()
+                    if not line:
+                        break
+                    if prompt and line == prompt:
+                        break
+                    response_lines.append(line)
+                self.ser.timeout = old_timeout
+
+                result = '\n'.join(response_lines) if response_lines else ""
+                if prompt:
+                    result = result.rstrip(prompt).rstrip('\r')
+                result = result.replace('\r', '\n')
+                return result
+            except Exception as e:
+                print(f"[ERROR] send_command_with_response() failed: {e}")
+                return None

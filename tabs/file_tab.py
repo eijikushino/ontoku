@@ -7,21 +7,21 @@ import re
 
 class FileTab(ttk.Frame):
     """
-    ファイル保存設定タブ（通信1のみ）
-    
+    ファイル保存設定タブ（DEFシリアルのみ）
+
     ・横幅を抑えるため、UIは基本「縦並び・左寄せ・短いラベル」
     ・上段:保存先フォルダ（共通）… Entry → 参照（縦配置、左寄せ）
-    ・下段:通信1の設定… S/N(DEF0〜DEF5) と CSV名 を縦並び・左寄せ
+    ・下段:DEFシリアルの設定… S/N(DEF0〜DEF5) と CSV名 を縦並び・左寄せ
     ・通信タブと同じ配色（#81D4FA: 水色）で色分け（左側色バー）
     ・入力はすべて自動保存（フォーカスアウト／Enter／入力後300ms）
     ・設定保存先:app_settings.json
         save_config.save_dir                 # 共通フォルダ
-        comm_profiles.1.serial_numbers       # 通信1のDEFシリアル
-        comm_profiles.1.save_config.file_name  # 通信1のCSV名
+        comm_profiles.1.serial_numbers       # DEFのシリアル番号
+        comm_profiles.1.save_config.file_name  # DEFのCSV名
         comm_profiles.1.device_type          # デバイスタイプ
     """
-    
-    # 通信1の配色（水色）
+
+    # DEFシリアルの配色（水色）
     COMM1_COLOR = "#81D4FA"
     
     def __init__(self, parent):
@@ -74,12 +74,12 @@ class FileTab(ttk.Frame):
         # 参照ボタン（左寄せ）
         ttk.Button(folder_lf, text="参照", command=self._browse_folder).pack(anchor="w", pady=(0, 2))
         
-        # ====== 下段:通信1の設定 ======
+        # ====== 下段:DEFシリアルの設定 ======
         comm_frame = self._build_comm1_frame(self)
         comm_frame.pack(fill="both", expand=True, padx=10, pady=(0, 10))
     
     def _build_comm1_frame(self, parent):
-        """通信1の設定フレーム構築"""
+        """DEFシリアルの設定フレーム構築"""
         # 外枠は tk.Frame で背景色を設定
         root = tk.Frame(parent, bg=self.COMM1_COLOR, bd=0, highlightthickness=0)
         
@@ -98,7 +98,7 @@ class FileTab(ttk.Frame):
         inner.grid(row=0, column=1, sticky="nsew", padx=(8, 8), pady=8)
         
         # 見出し
-        ttk.Label(inner, text="ファイル保存設定（通信1）", 
+        ttk.Label(inner, text="ファイル保存設定（DEFシリアル）",
                   font=("", 10, "bold")).pack(anchor="w", pady=(0, 10))
         
         # --- DEFタイプ選択(Main/Sub DEF 排他) ---
@@ -193,7 +193,7 @@ class FileTab(ttk.Frame):
     
     def _get_file_name(self):
         """CSVファイル名取得"""
-        # 通信1の設定 → 無ければグローバル → 既定
+        # DEFシリアルの設定 → 無ければグローバル → 既定
         return (
             self.config.get("comm_profiles", {}).get("1", {}).get("save_config", {}).get("file_name")
             or self.config.get("save_config", {}).get("file_name")
@@ -202,14 +202,14 @@ class FileTab(ttk.Frame):
     
     def _get_serial_number(self, def_index):
         """S/N取得"""
-        # 通信1の設定 → 無ければグローバル → ""
+        # DEFシリアルの設定 → 無ければグローバル → ""
         return (
             self.config.get("comm_profiles", {}).get("1", {}).get("serial_numbers", {}).get(f"DEF{def_index}_sn")
             or self.config.get("serial_numbers", {}).get(f"DEF{def_index}_sn", "")
         )
     
     def _ensure_comm_profile_keys(self):
-        """通信1のプロファイルキーを確保"""
+        """DEFシリアルのプロファイルキーを確保"""
         self.config.setdefault("comm_profiles", {})
         cp = self.config["comm_profiles"].setdefault("1", {})
         cp.setdefault("serial_numbers", {})

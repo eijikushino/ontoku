@@ -1,5 +1,7 @@
 import tkinter as tk
 import time
+import threading
+import queue
 from tkinter import ttk
 from tkinter.scrolledtext import ScrolledText
 from tkinter import messagebox
@@ -16,10 +18,20 @@ class DACTab(ttk.Frame):
     def __init__(self, parent, gpib_controller, serial_manager):
         super().__init__(parent)
         self.gpib = gpib_controller
-        self.serial_mgr = serial_manager  # 通信1用SerialManager
+        self.serial_mgr = serial_manager  # DEFシリアル用SerialManager
         self.show_response = True  # レスポンス表示ON/OFF
 
+        # 常駐リーダー用
+        self._text_queue = queue.Queue()
+        self._reader_running = False
+        self._need_recv_header = False
+
         self.create_widgets()
+
+        # 常駐リーダースレッド起動
+        self._reader_running = True
+        threading.Thread(target=self._reader_loop, daemon=True).start()
+        self._poll_text_queue()
 
     def create_widgets(self):
         # メインコンテナ
@@ -38,7 +50,7 @@ class DACTab(ttk.Frame):
         color_bar.pack(side="left", padx=(0, 6))
         color_bar.pack_propagate(False)
 
-        ttk.Label(header_frame, text="DAC操作(通信1)").pack(side="left")
+        ttk.Label(header_frame, text="DEF操作").pack(side="left")
 
         # 3列のフレームを作成
         columns_frame = ttk.Frame(left_frame)
@@ -155,7 +167,7 @@ class DACTab(ttk.Frame):
 
         # ===== 第3列:レスポンス表示 =====
         # 見出し
-        ttk.Label(col3_frame, text="レスポンス表示(通信1)").pack(anchor="w", pady=(0, 4))
+        ttk.Label(col3_frame, text="レスポンス表示(DEFシリアル)").pack(anchor="w", pady=(0, 4))
 
         # テキストエリア
         self.response_area = ScrolledText(
@@ -198,26 +210,22 @@ class DACTab(ttk.Frame):
     def _send(self, base_command: str):
         """選択されたDEFに対してコマンド送信"""
         if not self.serial_mgr.is_connected():
-            messagebox.showwarning("通信エラー", "通信1: シリアルポート未接続")
+            messagebox.showwarning("通信エラー", "DEFシリアル: ポート未接続")
             return
 
         for def_num in self._get_selected_defs():
             cmd = f"DEF {def_num} {base_command}"
             self._append_text(f"[SEND] {cmd}")
             try:
-                self.serial_mgr.flush_input()
+                self._need_recv_header = True
                 self.serial_mgr.write((cmd + "\r").encode("utf-8"))
-                if self.show_response:
-                    self._read_response()
-                else:
-                    time.sleep(0.05)
             except Exception as e:
                 self._append_text(f"[ERROR] write failed: {e}")
 
     def _send_manual(self):
         """手動コマンド送信(DEFプレフィックスなし、生コマンド)"""
         if not self.serial_mgr.is_connected():
-            messagebox.showwarning("通信エラー", "通信1: シリアルポート未接続")
+            messagebox.showwarning("通信エラー", "DEFシリアル: ポート未接続")
             return
 
         cmd = self.manual_cmd_var.get().strip()
@@ -227,9 +235,8 @@ class DACTab(ttk.Frame):
 
         self._append_text(f"[SEND] {cmd}")
         try:
-            self.serial_mgr.flush_input()
+            self._need_recv_header = True
             self.serial_mgr.write((cmd + "\r").encode("utf-8"))
-            self._read_response()
         except Exception as e:
             self._append_text(f"[ERROR] write failed: {e}")
 
@@ -237,7 +244,7 @@ class DACTab(ttk.Frame):
     def _send_dac_free(self):
         """フリー入力値でDACコマンド送信"""
         if not self.serial_mgr.is_connected():
-            messagebox.showwarning("通信エラー", "通信1: シリアルポート未接続")
+            messagebox.showwarning("通信エラー", "DEFシリアル: ポート未接続")
             return
 
         dac_type = self.dac_type_var.get()  # "P" or "L"
@@ -263,7 +270,7 @@ class DACTab(ttk.Frame):
     def _send_dac_preset(self, preset_type: str):
         """プリセット値でDACコマンド送信"""
         if not self.serial_mgr.is_connected():
-            messagebox.showwarning("通信エラー", "通信1: シリアルポート未接続")
+            messagebox.showwarning("通信エラー", "DEFシリアル: ポート未接続")
             return
 
         dac_type = self.dac_type_var.get()
@@ -276,12 +283,8 @@ class DACTab(ttk.Frame):
             cmd = f"DEF {def_num} DAC {dac_type} {hex_value}"
             self._append_text(f"[SEND] {cmd}")
             try:
-                self.serial_mgr.flush_input()
+                self._need_recv_header = True
                 self.serial_mgr.write((cmd + "\r").encode("utf-8"))
-                if self.show_response:
-                    self._read_response()
-                else:
-                    time.sleep(0.05)
             except Exception as e:
                 self._append_text(f"[ERROR] write failed: {e}")
 
@@ -289,7 +292,7 @@ class DACTab(ttk.Frame):
     def _read_dac_value(self):
         """選択されたDEFのDAC設定値を読み込み"""
         if not self.serial_mgr.is_connected():
-            messagebox.showwarning("通信エラー", "通信1: シリアルポート未接続")
+            messagebox.showwarning("通信エラー", "DEFシリアル: ポート未接続")
             return
 
         dac_type = self.dac_type_var.get()
@@ -298,82 +301,73 @@ class DACTab(ttk.Frame):
             cmd = f"DEF {def_num} DAC {dac_type}"
             self._append_text(f"[SEND] {cmd}")
             try:
-                self.serial_mgr.flush_input()
+                self._need_recv_header = True
                 self.serial_mgr.write((cmd + "\r").encode("utf-8"))
-                self._read_response_with_status()
             except Exception as e:
                 self._append_text(f"[ERROR] write failed: {e}")
 
-    def _read_response(self):
-        """
-        1文字ずつ読み取り、CR/LFで即時改行。'>'で1行入れて終了。タイムアウト3秒。
-        """
+    # ---------- 常駐リーダー ----------
+    def _reader_loop(self):
+        """常駐リーダースレッド: シリアルデータを読み続けて表示"""
         line_buffer = ""
-        timeout = time.time() + 3
-        while time.time() < timeout:
-            ch = self.serial_mgr.read()
-            if not ch:
+        skip_space = False
+        while self._reader_running:
+            if not self.serial_mgr.is_connected():
+                time.sleep(0.1)
                 continue
-            if ch in ("\r", "\n"):
-                if line_buffer.strip():
-                    self.response_area.insert(tk.END, line_buffer + "\n")
-                    self.response_area.see(tk.END)
-                    line_buffer = ""
-            elif ch == ">":
-                self.response_area.insert(tk.END, "> \n")
-                self.response_area.see(tk.END)
-                break
-            else:
-                line_buffer += ch
-
-    def _read_response_with_status(self):
-        """
-        設定値読み込み用のレスポンス読み取り。'>'の後の*local* *relay_OFF*も読み取る。
-        """
-        line_buffer = ""
-        prompt_found = False
-        timeout = time.time() + 3
-        no_data_count = 0
-
-        while time.time() < timeout:
-            ch = self.serial_mgr.read()
-
-            if not ch:
-                if prompt_found:
-                    no_data_count += 1
-                    if no_data_count > 20:  # 約0.2秒データが来なければ終了
-                        break
+            chunk = self._read_serial_chunk()
+            if not chunk:
                 time.sleep(0.01)
                 continue
-
-            no_data_count = 0
-
-            if ch in ("\r", "\n"):
-                if line_buffer.strip():
-                    self.response_area.insert(tk.END, line_buffer + "\n")
-                    self.response_area.see(tk.END)
+            for ch in chunk:
+                if ch in ("\r", "\n"):
+                    if line_buffer.strip() and self.show_response:
+                        if self._need_recv_header:
+                            self._text_queue.put("[RECV]")
+                            self._need_recv_header = False
+                        self._text_queue.put(line_buffer)
                     line_buffer = ""
-            elif ch == ">":
-                if line_buffer.strip():
-                    self.response_area.insert(tk.END, line_buffer + "> \n")
+                    skip_space = False
+                elif ch == ">" and not line_buffer.strip():
+                    line_buffer = ""
+                    skip_space = True
+                elif skip_space and ch == " ":
+                    skip_space = False
                 else:
-                    self.response_area.insert(tk.END, "> \n")
-                self.response_area.see(tk.END)
-                line_buffer = ""
-                prompt_found = True
-            else:
-                line_buffer += ch
+                    skip_space = False
+                    line_buffer += ch
 
-        # 最後にバッファに残っているデータがあれば表示
-        if line_buffer.strip():
-            self.response_area.insert(tk.END, line_buffer + "\n")
-            self.response_area.see(tk.END)
+    def _read_serial_chunk(self):
+        """受信バッファの全データを一括読み取り"""
+        with self.serial_mgr.lock:
+            if self.serial_mgr.is_connected():
+                n = self.serial_mgr.ser.in_waiting
+                if n > 0:
+                    try:
+                        return self.serial_mgr.ser.read(n).decode("utf-8", errors="ignore")
+                    except Exception:
+                        return ""
+        return ""
+
+    def _poll_text_queue(self):
+        """メインスレッドでキューからテキストを表示"""
+        try:
+            for _ in range(200):
+                message = self._text_queue.get_nowait()
+                self.response_area.insert(tk.END, message + "\n")
+                self.response_area.see(tk.END)
+        except queue.Empty:
+            pass
+        self.after(16, self._poll_text_queue)
 
     # ---------- ユーティリティ ----------
     def _append_text(self, message: str):
-        """レスポンスエリアにテキスト追加"""
-        self.response_area.insert(tk.END, message + "\n")
-        self.response_area.see(tk.END)
+        """スレッドセーフにレスポンスエリアへテキスト挿入"""
+        if threading.current_thread() is threading.main_thread():
+            self.response_area.insert(tk.END, message + "\n")
+            self.response_area.see(tk.END)
+        else:
+            self._text_queue.put(message)
 
     def _clear_response(self):
         """レスポンス表示をクリア"""

@@ -1,9 +1,13 @@
+import matplotlib
+matplotlib.use('TkAgg')
+
 import tkinter as tk
 from tkinter import ttk
 from tabs.communication_tab import CommunicationTab
 from tabs.test_tab import TestTab
 from tabs.graph_tab import GraphTab
 from tabs.dac_tab import DACTab
+from tabs.datagen_tab import DataGenTab
 from tabs.file_tab import FileTab
 from tabs.scanner_tab import ScannerTab
 from gpib_controller import GPIBController
@@ -25,8 +29,12 @@ class MainApplication(tk.Tk):
         self.gpib_3458a = GPIBController()  # HP 3458A (DMM) 用
         self.gpib_3499b = GPIBController()  # HP 3499B (Switch) 用
         
-        # シリアル通信マネージャー(通信1用)
+        # シリアル通信マネージャー(DEFシリアル通信用: 38400bps)
         self.serial_manager = SerialManager()
+
+        # DataGen専用SerialManager(115200bps)
+        self.datagen_manager = SerialManager(baudrate=115200)
+        self.datagen_manager2 = SerialManager(baudrate=115200)
         
         # メニューバーの作成
         self.create_menu()
@@ -36,10 +44,12 @@ class MainApplication(tk.Tk):
         self.notebook.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
         
         # 各タブの作成(2台のコントローラーとシリアルマネージャーを渡す)
-        self.comm_tab = CommunicationTab(self.notebook, self.gpib_3458a, self.gpib_3499b, self.serial_manager)
+        self.comm_tab = CommunicationTab(self.notebook, self.gpib_3458a, self.gpib_3499b, self.serial_manager,
+                                          datagen_manager=self.datagen_manager, datagen_manager2=self.datagen_manager2)
         self.test_tab = TestTab(self.notebook, self.serial_manager)  # serial_managerを渡す
         self.graph_tab = GraphTab(self.notebook, self.gpib_3458a)
         self.dac_tab = DACTab(self.notebook, self.gpib_3499b, self.serial_manager)
+        self.datagen_tab = DataGenTab(self.notebook, self.datagen_manager, self.datagen_manager2)
         self.file_tab = FileTab(self.notebook)  # 設定管理用タブ（GPIB不要）
         self.dmm3458a_tab = DMM3458ATab(self.notebook, self.gpib_3458a)
         self.scanner_tab = ScannerTab(self.notebook, self.gpib_3499b)
@@ -54,7 +64,8 @@ class MainApplication(tk.Tk):
         self.notebook.add(self.comm_tab, text="  通信設定  ")
         self.notebook.add(self.test_tab, text="  Pattern Test  ")
         self.notebook.add(self.graph_tab, text="  グラフ描画  ")
-        self.notebook.add(self.dac_tab, text="  DAC操作  ")
+        self.notebook.add(self.dac_tab, text="  DEF操作  ")
+        self.notebook.add(self.datagen_tab, text="  DataGen  ")
         self.notebook.add(self.file_tab, text="  ファイル保存  ")
         self.notebook.add(self.dmm3458a_tab, text="  DMM3458A  ")
         self.notebook.add(self.scanner_tab, text="  スキャナー  ")
@@ -158,10 +169,11 @@ class MainApplication(tk.Tk):
             0: '#d4e6f1',  # 通信設定 - 青系（通信グループ）
             1: '#d5f5e3',  # Pattern Test - 緑系（テストグループ）
             2: '#fdebd0',  # グラフ描画 - オレンジ系（分析グループ）
-            3: '#e8daef',  # DAC操作 - 紫系（操作グループ）
-            4: '#fdebd0',  # ファイル保存 - オレンジ系（分析グループ）
-            5: '#d4e6f1',  # DMM3458A - 青系（通信グループ）
-            6: '#d4e6f1',  # スキャナー - 青系（通信グループ）
+            3: '#e8daef',  # DEF操作 - 紫系（操作グループ）
+            4: '#fce4d6',  # DataGen - 暖色系
+            5: '#fdebd0',  # ファイル保存 - オレンジ系（分析グループ）
+            6: '#d4e6f1',  # DMM3458A - 青系（通信グループ）
+            7: '#d4e6f1',  # スキャナー - 青系（通信グループ）
         }
 
         # 現在選択されているタブのインデックス
@@ -175,10 +187,11 @@ class MainApplication(tk.Tk):
             0: '#a9cce3',  # 通信設定
             1: '#abebc6',  # Pattern Test
             2: '#f5cba7',  # グラフ描画
-            3: '#d2b4de',  # DAC操作
-            4: '#f5cba7',  # ファイル保存
-            5: '#a9cce3',  # DMM3458A
-            6: '#a9cce3',  # スキャナー
+            3: '#d2b4de',  # DEF操作
+            4: '#f0c4a8',  # DataGen
+            5: '#f5cba7',  # ファイル保存
+            6: '#a9cce3',  # DMM3458A
+            7: '#a9cce3',  # スキャナー
         }
 
         # スタイルを動的に更新
@@ -233,7 +246,7 @@ class MainApplication(tk.Tk):
         if self.gpib_3499b.connected:
             status_text.append("3499B接続中")
         if self.serial_manager.is_connected():
-            status_text.append("通信1接続中")
+            status_text.append("DEF接続中")
         
         if status_text:
             self.connection_label.config(text=" / ".join(status_text), foreground="green")
@@ -264,10 +277,24 @@ class MainApplication(tk.Tk):
         if self.serial_manager.is_connected():
             try:
                 self.serial_manager.disconnect()
-                disconnected.append("通信1")
+                disconnected.append("DEF")
             except Exception as e:
-                self.update_status(f"通信1切断エラー: {e}")
-        
+                self.update_status(f"DEFシリアル切断エラー: {e}")
+
+        if self.datagen_manager.is_connected():
+            try:
+                self.datagen_manager.disconnect()
+                disconnected.append("DG1")
+            except Exception as e:
+                self.update_status(f"DG1切断エラー: {e}")
+
+        if self.datagen_manager2.is_connected():
+            try:
+                self.datagen_manager2.disconnect()
+                disconnected.append("DG2")
+            except Exception as e:
+                self.update_status(f"DG2切断エラー: {e}")
+
         if disconnected:
             self.update_status(f"{', '.join(disconnected)} を切断しました")
         else:
@@ -289,6 +316,11 @@ class MainApplication(tk.Tk):
         # シリアル通信を切断
         if self.serial_manager.is_connected():
             self.serial_manager.disconnect()
+        # DataGen通信を切断
+        if self.datagen_manager.is_connected():
+            self.datagen_manager.disconnect()
+        if self.datagen_manager2.is_connected():
+            self.datagen_manager2.disconnect()
         # Matplotlibのグラフウィンドウを全て閉じる
         import matplotlib.pyplot as plt
         plt.close('all')

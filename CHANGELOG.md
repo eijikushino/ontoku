@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.33] - 2026-02-26
+### 追加
+- DataGenタブを新規追加（tabs/datagen_tab.py）
+  - DataGen1/DataGen2切替（色分けUI: 青/オレンジ）
+  - コネクタ設定（CMODE/INV/FUNC）、2値Pattern、RNDM、RMP、Rate設定
+  - グリッチシーケンス（7段階、一時停止/再開/停止対応）
+  - 手動コマンド送信、レスポンスウィンドウ、初期化コマンド一括送信
+- 通信設定タブにDataGenシリアルポート設定を追加（DG1/DG2）
+- serial_manager.pyにsend_command/send_command_with_response メソッド追加
+- DEF操作タブに受信データ連続表示機能を追加（リーダースレッド+キュー方式）
+### 変更
+- 「DAC操作」タブを「DEF操作」に名称変更
+- 「シリアル通信1」を「DEF シリアル通信」に名称変更
+- 通信設定タブのGPIB設定を横並びレイアウトに変更（DataGen設定のスペース確保）
+
 ## [1.32] - 2026-02-13
 ### 追加
 - Pattern Testタブに開始前待機機能を追加

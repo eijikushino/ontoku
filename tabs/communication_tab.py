@@ -6,11 +6,14 @@ import json
 import os
 
 class CommunicationTab(ttk.Frame):
-    def __init__(self, parent, gpib_3458a, gpib_3499b, serial_manager):
+    def __init__(self, parent, gpib_3458a, gpib_3499b, serial_manager,
+                 datagen_manager=None, datagen_manager2=None):
         super().__init__(parent)
         self.gpib_3458a = gpib_3458a
         self.gpib_3499b = gpib_3499b
-        self.serial_mgr = serial_manager  # 通信1用SerialManager
+        self.serial_mgr = serial_manager  # DEFシリアル用SerialManager
+        self.datagen_mgr = datagen_manager      # DataGen1用
+        self.datagen_mgr2 = datagen_manager2    # DataGen2用
         
         # 汎用設定ファイルのパス
         self.config_file = "app_settings.json"
@@ -37,9 +40,15 @@ class CommunicationTab(ttk.Frame):
         scrollbar.pack(side=tk.LEFT, fill=tk.Y)
         self.resource_list.config(yscrollcommand=scrollbar.set)
         
+        # === GPIB機器 横並びコンテナ ===
+        gpib_container = ttk.Frame(self)
+        gpib_container.pack(fill=tk.X, padx=10, pady=5)
+        gpib_container.columnconfigure(0, weight=1)
+        gpib_container.columnconfigure(1, weight=1)
+
         # === 3458A 接続フレーム ===
-        frame_3458a = ttk.LabelFrame(self, text="HP 3458A (DMM) 接続制御", padding=10)
-        frame_3458a.pack(fill=tk.X, padx=10, pady=5)
+        frame_3458a = ttk.LabelFrame(gpib_container, text="HP 3458A (DMM) 接続制御", padding=10)
+        frame_3458a.grid(row=0, column=0, sticky="nsew", padx=(0, 3))
         
         # リソース名入力
         ttk.Label(frame_3458a, text="リソース名:").grid(row=0, column=0, sticky=tk.W, padx=5, pady=2)
@@ -70,8 +79,8 @@ class CommunicationTab(ttk.Frame):
         self.status_3458a.pack(side=tk.LEFT, padx=10)
         
         # === 3499B 接続フレーム ===
-        frame_3499b = ttk.LabelFrame(self, text="HP 3499B (Switch) 接続制御", padding=10)
-        frame_3499b.pack(fill=tk.X, padx=10, pady=5)
+        frame_3499b = ttk.LabelFrame(gpib_container, text="HP 3499B (Switch) 接続制御", padding=10)
+        frame_3499b.grid(row=0, column=1, sticky="nsew", padx=(3, 0))
         
         # リソース名入力
         ttk.Label(frame_3499b, text="リソース名:").grid(row=0, column=0, sticky=tk.W, padx=5, pady=2)
@@ -101,15 +110,15 @@ class CommunicationTab(ttk.Frame):
         self.status_3499b = ttk.Label(btn_frame_3499b, text="未接続", foreground="red")
         self.status_3499b.pack(side=tk.LEFT, padx=10)
         
-        # ===== シリアル通信1フレーム =====
-        serial_frame = ttk.LabelFrame(self, text="シリアル通信1", padding=10)
+        # ===== DEF シリアル通信フレーム =====
+        serial_frame = ttk.LabelFrame(self, text="DEF シリアル通信", padding=10)
         serial_frame.pack(fill=tk.X, padx=10, pady=5)
         
         # 色ライン + UI
         content = tk.Frame(serial_frame, bd=0, highlightthickness=0)
         content.pack(fill="x")
         
-        # 色ライン（通信1の色: #81D4FA）
+        # 色ライン（DEFシリアルの色: #81D4FA）
         color_line = tk.Frame(content, bg="#81D4FA", width=8, height=28, bd=0, highlightthickness=0)
         color_line.pack(side="left", fill="y", padx=(0, 10))
         color_line.pack_propagate(False)
@@ -145,13 +154,83 @@ class CommunicationTab(ttk.Frame):
                                               foreground="gray", width=20, anchor="w")
         self.serial_status_label.pack(side="left")
         
+        # ===== DataGen シリアル通信フレーム =====
+        datagen_frame = ttk.LabelFrame(self, text="DataGen シリアル通信 (115200bps)", padding=10)
+        datagen_frame.pack(fill=tk.X, padx=10, pady=5)
+
+        # --- DataGen1 ---
+        dg1_content = tk.Frame(datagen_frame, bd=0, highlightthickness=0)
+        dg1_content.pack(fill="x", pady=(0, 5))
+
+        dg1_color = tk.Frame(dg1_content, bg="#1976D2", width=8, height=28, bd=0, highlightthickness=0)
+        dg1_color.pack(side="left", fill="y", padx=(0, 10))
+        dg1_color.pack_propagate(False)
+
+        dg1_ui = ttk.Frame(dg1_content)
+        dg1_ui.pack(side="left", fill="x", expand=True)
+
+        dg1_port_frame = ttk.Frame(dg1_ui)
+        dg1_port_frame.pack(side="left", padx=(0, 10))
+        ttk.Label(dg1_port_frame, text="DG1:").pack(side="left", padx=(0, 5))
+        self.dg1_port_var = tk.StringVar()
+        self.dg1_port_combo = ttk.Combobox(dg1_port_frame, textvariable=self.dg1_port_var,
+                                            state="readonly", width=15)
+        self.dg1_port_combo.pack(side="left", padx=(0, 5))
+
+        dg1_btn = ttk.Frame(dg1_ui)
+        dg1_btn.pack(side="left", padx=(0, 10))
+        ttk.Button(dg1_btn, text="接続",
+                   command=self.connect_datagen1).pack(side="left", padx=(0, 5))
+        ttk.Button(dg1_btn, text="切断",
+                   command=self.disconnect_datagen1).pack(side="left")
+
+        dg1_status = ttk.Frame(dg1_ui)
+        dg1_status.pack(side="left")
+        ttk.Label(dg1_status, text="ステータス:").pack(side="left", padx=(0, 5))
+        self.dg1_status_label = ttk.Label(dg1_status, text="未接続",
+                                           foreground="gray", width=20, anchor="w")
+        self.dg1_status_label.pack(side="left")
+
+        # --- DataGen2 ---
+        dg2_content = tk.Frame(datagen_frame, bd=0, highlightthickness=0)
+        dg2_content.pack(fill="x")
+
+        dg2_color = tk.Frame(dg2_content, bg="#F57C00", width=8, height=28, bd=0, highlightthickness=0)
+        dg2_color.pack(side="left", fill="y", padx=(0, 10))
+        dg2_color.pack_propagate(False)
+
+        dg2_ui = ttk.Frame(dg2_content)
+        dg2_ui.pack(side="left", fill="x", expand=True)
+
+        dg2_port_frame = ttk.Frame(dg2_ui)
+        dg2_port_frame.pack(side="left", padx=(0, 10))
+        ttk.Label(dg2_port_frame, text="DG2:").pack(side="left", padx=(0, 5))
+        self.dg2_port_var = tk.StringVar()
+        self.dg2_port_combo = ttk.Combobox(dg2_port_frame, textvariable=self.dg2_port_var,
+                                            state="readonly", width=15)
+        self.dg2_port_combo.pack(side="left", padx=(0, 5))
+
+        dg2_btn = ttk.Frame(dg2_ui)
+        dg2_btn.pack(side="left", padx=(0, 10))
+        ttk.Button(dg2_btn, text="接続",
+                   command=self.connect_datagen2).pack(side="left", padx=(0, 5))
+        ttk.Button(dg2_btn, text="切断",
+                   command=self.disconnect_datagen2).pack(side="left")
+
+        dg2_status = ttk.Frame(dg2_ui)
+        dg2_status.pack(side="left")
+        ttk.Label(dg2_status, text="ステータス:").pack(side="left", padx=(0, 5))
+        self.dg2_status_label = ttk.Label(dg2_status, text="未接続",
+                                           foreground="gray", width=20, anchor="w")
+        self.dg2_status_label.pack(side="left")
+
         # ログウィジェット（拡大）
         log_frame = ttk.LabelFrame(self, text="通信ログ", padding=10)
         log_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
-        
+
         # LoggerWidgetは内部でpack()を実行するため、明示的なpack()は不要
         self.logger = LoggerWidget(log_frame, height=20)
-        
+
         # 初期化
         self.rescan_ports()
     
@@ -347,15 +426,24 @@ class CommunicationTab(ttk.Frame):
     
     # ========== シリアル通信関連メソッド ==========
     def rescan_ports(self):
-        """シリアルポートを再スキャン"""
+        """シリアルポートを再スキャン（DEF + DataGen共通）"""
         ports = [p.device for p in serial.tools.list_ports.comports()]
+        # DEF用
         self.port_combo["values"] = ports
         if ports:
-            current = self.port_var.get()
-            if current not in ports:
+            if self.port_var.get() not in ports:
                 self.port_var.set(ports[0])
         else:
             self.port_var.set("")
+        # DataGen用
+        self.dg1_port_combo["values"] = ports
+        if ports:
+            if self.dg1_port_var.get() not in ports:
+                self.dg1_port_var.set(ports[0] if ports else "")
+        self.dg2_port_combo["values"] = ports
+        if ports:
+            if self.dg2_port_var.get() not in ports:
+                self.dg2_port_var.set(ports[0] if ports else "")
         self.logger.log(f"ポートスキャン完了: {len(ports)}個のポートが見つかりました", "INFO")
     
     def connect_serial(self):
@@ -376,16 +464,63 @@ class CommunicationTab(ttk.Frame):
         result = self.serial_mgr.connect(selected_port)
         if result:
             self.serial_status_label.config(text=f"{selected_port} に接続中", foreground="green")
-            self.logger.log(f"シリアル通信1: {selected_port} に接続しました", "SUCCESS")
+            self.logger.log(f"DEFシリアル通信: {selected_port} に接続しました", "SUCCESS")
         else:
             self.serial_status_label.config(text=f"{selected_port} 接続失敗", foreground="red")
-            self.logger.log(f"シリアル通信1: {selected_port} への接続に失敗しました", "ERROR")
+            self.logger.log(f"DEFシリアル通信: {selected_port} への接続に失敗しました", "ERROR")
     
     def disconnect_serial(self):
         """シリアルポートを切断"""
         try:
             self.serial_mgr.disconnect()
             self.serial_status_label.config(text="未接続", foreground="gray")
-            self.logger.log("シリアル通信1: 切断しました", "SUCCESS")
+            self.logger.log("DEFシリアル通信: 切断しました", "SUCCESS")
         except Exception as e:
             self.logger.log(f"切断エラー: {e}", "ERROR")
+
+    # ========== DataGen シリアル通信 ==========
+    def _connect_datagen(self, manager, port_var, status_label, name):
+        """DataGen共通接続処理"""
+        if not manager:
+            self.logger.log(f"{name}: マネージャ未設定", "ERROR")
+            return
+        selected_port = port_var.get()
+        if not selected_port:
+            status_label.config(text="ポート未選択", foreground="red")
+            self.logger.log(f"{name}: ポートを選択してください", "ERROR")
+            return
+        if manager.is_connected():
+            try:
+                manager.disconnect()
+            except Exception:
+                pass
+        result = manager.connect(selected_port)
+        if result:
+            status_label.config(text=f"{selected_port} に接続中", foreground="green")
+            self.logger.log(f"{name}: {selected_port} に接続しました", "SUCCESS")
+        else:
+            status_label.config(text=f"{selected_port} 接続失敗", foreground="red")
+            self.logger.log(f"{name}: {selected_port} への接続に失敗しました", "ERROR")
+
+    def _disconnect_datagen(self, manager, status_label, name):
+        """DataGen共通切断処理"""
+        if not manager:
+            return
+        try:
+            manager.disconnect()
+            status_label.config(text="未接続", foreground="gray")
+            self.logger.log(f"{name}: 切断しました", "SUCCESS")
+        except Exception as e:
+            self.logger.log(f"{name} 切断エラー: {e}", "ERROR")
+
+    def connect_datagen1(self):
+        self._connect_datagen(self.datagen_mgr, self.dg1_port_var, self.dg1_status_label, "DataGen1")
+
+    def disconnect_datagen1(self):
+        self._disconnect_datagen(self.datagen_mgr, self.dg1_status_label, "DataGen1")
+
+    def connect_datagen2(self):
+        self._connect_datagen(self.datagen_mgr2, self.dg2_port_var, self.dg2_status_label, "DataGen2")
+
+    def disconnect_datagen2(self):
+        self._disconnect_datagen(self.datagen_mgr2, self.dg2_status_label, "DataGen2")

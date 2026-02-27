@@ -35,7 +35,7 @@
 │   ├── communication_tab.py # 通信設定タブ (391行)
 │   ├── test_tab.py          # パターンテストタブ (1135行) ※最大
 │   ├── graph_tab.py         # グラフ描画タブ (307行)
-│   ├── dac_tab.py           # DAC操作タブ (326行)
+│   ├── dac_tab.py           # DEF操作タブ (326行)
 │   ├── file_tab.py          # ファイル保存タブ
 │   ├── scanner_tab.py       # スキャナータブ
 │   ├── dmm3458a_tab.py      # DMM3458A制御タブ
@@ -106,3 +106,4 @@ DEF {n} DAC {P|L} {HEX}\r    # DAC設定
 - コード修正後は必ずコミット確認を求めること
 - 修正前に対象ファイルのみ読み込む（全体読み込み禁止）
 - 変更内容を簡潔に説明してからコミットする
+- コミット時は `/vc` スキル（version-commit）を使用し、version.py・CHANGELOG.md・コミットを一括更新する
