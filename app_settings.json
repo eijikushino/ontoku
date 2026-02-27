@@ -1,6 +1,6 @@
 {
     "gpib": {
-        "3458a_resource": "GPIB0::22::INSTR",
+        "3458a_resource": "GPIB0::6::INSTR",
         "3499b_resource": "GPIB0::9::INSTR"
     },
     "test": {
@@ -8,9 +8,9 @@
         "filename": "温特パターン",
         "def_checks": [
             true,
-            true,
-            true,
-            true,
+            false,
+            false,
+            false,
             false,
             false
         ],
@@ -58,5 +58,21 @@
     },
     "scanner": {
         "relay_switch_delay": 1.0
+    },
+    "serial_ports": {
+        "def_port": "COM6",
+        "dg1_port": "COM8",
+        "dg2_port": "COM6"
+    },
+    "linearity": {
+        "pattern_mode": "Random",
+        "num_points": "64",
+        "position": true,
+        "lbc": false,
+        "settle_time": 0.2,
+        "th_gain": 0.01,
+        "th_offset": 2.0,
+        "th_error": 1.5,
+        "save_dir": "linearity_data"
     }
 }

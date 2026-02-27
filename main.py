@@ -10,6 +10,7 @@ from tabs.dac_tab import DACTab
 from tabs.datagen_tab import DataGenTab
 from tabs.file_tab import FileTab
 from tabs.scanner_tab import ScannerTab
+from tabs.linearity_tab import LinearityTab
 from gpib_controller import GPIBController
 from tabs.dmm3458a_tab import DMM3458ATab
 from serial_manager import SerialManager
@@ -53,7 +54,9 @@ class MainApplication(tk.Tk):
         self.file_tab = FileTab(self.notebook)  # 設定管理用タブ（GPIB不要）
         self.dmm3458a_tab = DMM3458ATab(self.notebook, self.gpib_3458a)
         self.scanner_tab = ScannerTab(self.notebook, self.gpib_3499b)
-        
+        self.linearity_tab = LinearityTab(self.notebook, self.gpib_3458a, self.gpib_3499b,
+                                           self.datagen_manager, self.test_tab)
+
         # TestタブにDACタブのDEF選択状態を共有
         self.test_tab.set_def_vars(self.dac_tab.def_vars)
         
@@ -69,7 +72,8 @@ class MainApplication(tk.Tk):
         self.notebook.add(self.file_tab, text="  ファイル保存  ")
         self.notebook.add(self.dmm3458a_tab, text="  DMM3458A  ")
         self.notebook.add(self.scanner_tab, text="  スキャナー  ")
-        
+        self.notebook.add(self.linearity_tab, text="  Linearity  ")
+
         # ステータスバーの作成
         self.create_statusbar()
     
@@ -174,6 +178,7 @@ class MainApplication(tk.Tk):
             5: '#fdebd0',  # ファイル保存 - オレンジ系（分析グループ）
             6: '#d4e6f1',  # DMM3458A - 青系（通信グループ）
             7: '#d4e6f1',  # スキャナー - 青系（通信グループ）
+            8: '#d5f5e3',  # Linearity - 緑系（テストグループ）
         }
 
         # 現在選択されているタブのインデックス
@@ -192,6 +197,7 @@ class MainApplication(tk.Tk):
             5: '#f5cba7',  # ファイル保存
             6: '#a9cce3',  # DMM3458A
             7: '#a9cce3',  # スキャナー
+            8: '#abebc6',  # Linearity
         }
 
         # スタイルを動的に更新

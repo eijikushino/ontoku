@@ -2,6 +2,23 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.34] - 2026-02-27
+### 追加
+- Linearity試験タブを新規追加（tabs/linearity_tab.py）
+  - DACの直線性を測定し、最小二乗法で誤差を算出・グラフ表示・CSV保存
+  - パターンモード: Linear（等間隔）/ Random（ランダム）/ File（ファイル読込）
+  - DAC種別: Position（20bit）/ LBC（16bit）対応
+  - DataGen経由のDAC値設定（alt s sa ci/cii、alt a {HEX} ci/cii p/n）
+  - スキャナーCH切替（measurement_windowと同じcpon方式）
+  - DMM計測（DCV range設定 + TRIG SGL）
+  - Gain/Offset/Error算出、NG閾値判定
+  - 結果サマリーTreeview（OK/NG色分け）
+  - 誤差散布図グラフ（NG閾値ライン、NG時背景色変更）
+  - CSV保存（{serial}_{DAC}_{Pole}_linearity_{timestamp}.csv）
+  - 設定のapp_settings.json自動保存/読込
+### 改善
+- 通信設定タブのシリアルポート設定を自動保存/復元するよう改善
+
 ## [1.33] - 2026-02-26
 ### 追加
 - DataGenタブを新規追加（tabs/datagen_tab.py）

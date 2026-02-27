@@ -251,6 +251,13 @@ class CommunicationTab(ttk.Frame):
             "3458a_resource": self.resource_3458a_entry.get().strip(),
             "3499b_resource": self.resource_3499b_entry.get().strip()
         }
+
+        # シリアルポート設定を更新
+        config["serial_ports"] = {
+            "def_port": self.port_var.get(),
+            "dg1_port": self.dg1_port_var.get(),
+            "dg2_port": self.dg2_port_var.get()
+        }
         
         try:
             with open(self.config_file, 'w', encoding='utf-8') as f:
@@ -282,6 +289,17 @@ class CommunicationTab(ttk.Frame):
                     self.resource_3499b_entry.insert(0, gpib_config["3499b_resource"])
                 
                 self.logger.log("前回の接続設定を読み込みました", "SUCCESS")
+
+            # シリアルポート設定を復元
+            if "serial_ports" in config:
+                sp = config["serial_ports"]
+                available = list(self.port_combo["values"])
+                if sp.get("def_port") and sp["def_port"] in available:
+                    self.port_var.set(sp["def_port"])
+                if sp.get("dg1_port") and sp["dg1_port"] in available:
+                    self.dg1_port_var.set(sp["dg1_port"])
+                if sp.get("dg2_port") and sp["dg2_port"] in available:
+                    self.dg2_port_var.set(sp["dg2_port"])
         except Exception as e:
             self.logger.log(f"設定読み込み失敗: {str(e)}", "ERROR")
     
@@ -465,6 +483,7 @@ class CommunicationTab(ttk.Frame):
         if result:
             self.serial_status_label.config(text=f"{selected_port} に接続中", foreground="green")
             self.logger.log(f"DEFシリアル通信: {selected_port} に接続しました", "SUCCESS")
+            self.save_config()
         else:
             self.serial_status_label.config(text=f"{selected_port} 接続失敗", foreground="red")
             self.logger.log(f"DEFシリアル通信: {selected_port} への接続に失敗しました", "ERROR")
@@ -498,6 +517,7 @@ class CommunicationTab(ttk.Frame):
         if result:
             status_label.config(text=f"{selected_port} に接続中", foreground="green")
             self.logger.log(f"{name}: {selected_port} に接続しました", "SUCCESS")
+            self.save_config()
         else:
             status_label.config(text=f"{selected_port} 接続失敗", foreground="red")
             self.logger.log(f"{name}: {selected_port} への接続に失敗しました", "ERROR")
