@@ -65,14 +65,14 @@
         "dg2_port": "COM6"
     },
     "linearity": {
-        "pattern_mode": "Random",
-        "num_points": "64",
+        "pattern_mode": "Ship",
+        "num_points": "32",
         "position": true,
         "lbc": false,
         "settle_time": 0.2,
         "th_gain": 0.01,
-        "th_offset": 2.0,
+        "th_offset": 10.0,
         "th_error": 1.5,
-        "save_dir": "linearity_data"
+        "save_dir": "C:/Users/e-kus/Desktop/AI/ClaudeCode/温特アプリ/Linearity結果"
     }
 }
