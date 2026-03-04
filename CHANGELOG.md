@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.38] - 2026-03-04
+### 変更
+- LBCデータセットを上詰め（16bit→4bit左シフトで20bitレジスタ上位に配置）
+- LBC center値を08000→80000に修正
+- LBC NEGのデータセット先を常にcii pに変更（cii nを使用しない）
+- Position NEGのデータ設定順を逆順に変更
+- Excel COM起動をDispatchExに変更（他のExcelファイルを強制終了しない）
+### 追加
+- 測定完了ごとにグラフPNGをウィンドウ表示
+
 ## [1.37] - 2026-03-04
 ### 変更
 - 出荷シーケンスExcel出力をテンプレートXLSX方式に変更

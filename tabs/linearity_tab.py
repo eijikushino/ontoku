@@ -20,7 +20,7 @@ class LinearityTab(ttk.Frame):
     # DAC仕様定数
     DAC_SPECS = {
         'Position': {'bits': 20, 'span': 20.0, 'ci': 'ci', 'center': '80000', 'dmm_range': '10'},
-        'LBC':      {'bits': 16, 'span': 2.0,  'ci': 'cii', 'center': '08000', 'dmm_range': '1'},
+        'LBC':      {'bits': 16, 'span': 2.0,  'ci': 'cii', 'center': '80000', 'dmm_range': '1'},
     }
 
     # 出荷試験 (Ship) NG判定基準 (Excelマクロ DacTestBench5K 準拠)
@@ -405,8 +405,10 @@ class LinearityTab(ttk.Frame):
 
         if mode == 'Ship':
             if bits == 20:
-                return list(self.SHIP_PATTERN_POSITION_POS if pole == 'POS'
-                            else self.SHIP_PATTERN_POSITION_NEG)
+                if pole == 'POS':
+                    return list(self.SHIP_PATTERN_POSITION_POS)
+                else:
+                    return list(reversed(self.SHIP_PATTERN_POSITION_NEG))
             else:
                 return list(self.SHIP_PATTERN_LBC_POS if pole == 'POS'
                             else self.SHIP_PATTERN_LBC_NEG)
@@ -594,7 +596,8 @@ class LinearityTab(ttk.Frame):
                                 break
 
                             mask = (1 << bits) - 1
-                            hex_str = f"{val & mask:05X}"
+                            shift = 20 - bits  # LBC(16bit)は上詰め(4bit左シフト)
+                            hex_str = f"{(val & mask) << shift:05X}"
 
                             # DAC値設定
                             self._datagen_set_value(hex_str, ci_cmd, pole_cmd)
@@ -802,6 +805,9 @@ class LinearityTab(ttk.Frame):
         if self.pattern_mode.get() == 'Linear':
             self._datagen_send(f"alt a {hex_str} {ci_cmd} p")
             self._datagen_send(f"alt a {hex_str} {ci_cmd} n")
+        elif ci_cmd == 'cii':
+            # LBCはNEGでも常にcii pにセット
+            self._datagen_send(f"alt a {hex_str} {ci_cmd} p")
         else:
             self._datagen_send(f"alt a {hex_str} {ci_cmd} {pole_cmd}")
 
@@ -1099,6 +1105,25 @@ class LinearityTab(ttk.Frame):
         plt.tight_layout()
         plt.show(block=False)
 
+    def _show_png(self, png_path):
+        """PNGファイルをウィンドウで表示"""
+        try:
+            from PIL import Image, ImageTk
+            img = Image.open(png_path)
+
+            win = tk.Toplevel(self)
+            win.title(os.path.basename(png_path))
+            win.resizable(True, True)
+
+            photo = ImageTk.PhotoImage(img)
+            label = tk.Label(win, image=photo)
+            label.image = photo  # 参照保持
+            label.pack()
+
+            win.update_idletasks()
+        except Exception as e:
+            self.log(f"  PNG表示エラー: {e}", "WARNING")
+
     def _save_graph_ship_png(self, data):
         """XLSX内のグラフと表をExcel COM経由でPNGエクスポート"""
         xlsx_path = data.get('xlsx_path')
@@ -1113,26 +1138,28 @@ class LinearityTab(ttk.Frame):
             import win32com.client
             from PIL import ImageGrab
 
-            excel = win32com.client.Dispatch("Excel.Application")
+            excel = win32com.client.DispatchEx("Excel.Application")
             excel.Visible = False
             excel.DisplayAlerts = False
-            wb = excel.Workbooks.Open(os.path.abspath(xlsx_path))
-            ws = wb.Sheets(1)
+            try:
+                wb = excel.Workbooks.Open(os.path.abspath(xlsx_path))
+                ws = wb.Sheets(1)
 
-            # グラフPNG
-            ws.ChartObjects(1).Chart.Export(os.path.abspath(chart_png))
+                # グラフPNG
+                ws.ChartObjects(1).Chart.Export(os.path.abspath(chart_png))
 
-            # 表PNG (Row3～判定結果行)
-            n_pts = len(data['x_vals'])
-            judge_row = 7 + n_pts - 1 + 4
-            rng = ws.Range(f"A5:H{judge_row}")
-            rng.CopyPicture(Appearance=1, Format=2)  # xlScreen, xlBitmap
-            img = ImageGrab.grabclipboard()
-            if img:
-                img.save(os.path.abspath(table_png))
+                # 表PNG (Row3～判定結果行)
+                n_pts = len(data['x_vals'])
+                judge_row = 7 + n_pts - 1 + 4
+                rng = ws.Range(f"A5:H{judge_row}")
+                rng.CopyPicture(Appearance=1, Format=2)  # xlScreen, xlBitmap
+                img = ImageGrab.grabclipboard()
+                if img:
+                    img.save(os.path.abspath(table_png))
 
-            wb.Close(False)
-            excel.Quit()
+                wb.Close(False)
+            finally:
+                excel.Quit()
 
             if os.path.exists(table_png):
                 self._queue_update('log', (
@@ -1185,6 +1212,7 @@ class LinearityTab(ttk.Frame):
                     png_path = self._save_graph_ship_png(data)
                     if png_path:
                         self.log(f"  PNG保存: {png_path}", "SUCCESS")
+                        self._show_png(png_path)
                 elif msg_type == 'done':
                     self._finish()
                     return
