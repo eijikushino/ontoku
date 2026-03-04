@@ -1019,34 +1019,38 @@ class LinearityTab(ttk.Frame):
         ws.title = new_name
         self._update_chart_refs(ws, old_name, new_name)
 
-        # POS: 逆順+補数でNEG等価コード昇順、測定電圧は逆順(+V先頭)
-        # NEG: 昇順のまま
         n_pts = len(measured_v)
-        max_val = (1 << bits) - 1
-        offset_val = 2 ** (bits - 1)
-        shift = 20 - bits
-        if pole == 'POS':
-            unsigned_vals = list(reversed(unsigned_vals))
-            measured_v = list(reversed(measured_v))
 
-        for i in range(n_pts):
-            uval = unsigned_vals[i]
+        if bits == 20:
+            # Position: テンプレートのA-D列をそのまま使用、E列のみ書き込み
+            # NEGはci n送信のため電圧が反転 → 逆順にして-V先頭にする
+            if pole == 'NEG':
+                measured_v = list(reversed(measured_v))
+            for i in range(n_pts):
+                ws.cell(row=7 + i, column=5, value=measured_v[i])
+        else:
+            # LBC: POS側はNEG等価コード(補数)でA-D上書き、測定電圧は+V先頭
+            max_val = (1 << bits) - 1
+            offset_val = 2 ** (bits - 1)
             if pole == 'POS':
-                code = max_val - uval  # NEG等価コード
-            else:
-                code = uval
-            row = 7 + i
-            ws.cell(row=row, column=1, value=i + 1).number_format = '0'
-            ws.cell(row=row, column=2, value=code - offset_val).number_format = '0'
-            ws.cell(row=row, column=3, value=code).number_format = '0'
-            if bits == 20:
-                hex_str = f"{code & 0xFFFFF:05X}"
-            else:
+                unsigned_vals = list(reversed(unsigned_vals))
+                measured_v = list(reversed(measured_v))
+
+            for i in range(n_pts):
+                uval = unsigned_vals[i]
+                if pole == 'POS':
+                    code = max_val - uval  # NEG等価コード
+                else:
+                    code = uval
+                row = 7 + i
+                ws.cell(row=row, column=1, value=i + 1).number_format = '0'
+                ws.cell(row=row, column=2, value=code - offset_val).number_format = '0'
+                ws.cell(row=row, column=3, value=code).number_format = '0'
                 hex_str = f"{code & 0xFFFF:04X}"
-            hex_cell = ws.cell(row=row, column=4, value=hex_str)
-            hex_cell.number_format = '@'
-            hex_cell.quotePrefix = True
-            ws.cell(row=row, column=5, value=measured_v[i])
+                hex_cell = ws.cell(row=row, column=4, value=hex_str)
+                hex_cell.number_format = '@'
+                hex_cell.quotePrefix = True
+                ws.cell(row=row, column=5, value=measured_v[i])
 
         # チャートタイトル変更
         chart = ws._charts[0]

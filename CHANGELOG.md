@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.40] - 2026-03-04
+### 修正
+- Position XLSX出力でテンプレートのA-D列（設定DAC値・コード）を上書きしないよう修正
+- Position NEG測定電圧の並び順を-V先頭に修正（ci n送信による電圧反転を考慮）
+### 変更
+- Position/LBCでXLSX書き込み処理を分離（Position: E列のみ、LBC: A-E列全書き込み）
+
 ## [1.39] - 2026-03-04
 ### 変更
 - DAC設定をチェックボックスからラジオボタンに変更（Position/LBC排他選択）
