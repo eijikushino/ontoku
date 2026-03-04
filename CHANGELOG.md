@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.36] - 2026-03-04
+### 変更
+- 出荷シーケンスのPOS/NEGパターンを個別定義に変更
+  - Position POS: LSB側ビット境界テスト (48点)
+  - Position NEG: MSB側ビット境界テスト (48点)
+  - LBC POS: MSB側ビット境界テスト (54点)
+  - LBC NEG: LSB側ビット境界テスト (54点)
+- NEG XLSX出力を参照XLSフォーマットに準拠
+  - B/C/D列（設定DAC値・unsigned・HEX）をPOSパターンのコードで表示
+  - E列（測定電圧）を測定順の逆順で表示
+  - DNL表示をPOSコードステップ基準に変更
+  - INL/DNLのNG色判定を表示順で再計算
+- 判定結果をExcel数式化（参照XLS準拠のIF式）
+- signed計算をPOS式（unsigned - offset）に統一
+
 ## [1.35] - 2026-03-02
 ### 改善
 - 出荷シーケンスExcel出力を参照XLSフォーマットに合わせて修正

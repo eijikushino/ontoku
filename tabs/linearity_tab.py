@@ -13,6 +13,8 @@ import matplotlib.pyplot as plt
 from openpyxl import Workbook
 from openpyxl.styles import Font, Border, Side, Alignment, numbers
 from openpyxl.utils import get_column_letter
+from openpyxl.chart import LineChart, Reference, Series
+from openpyxl.chart.axis import ChartLines
 
 
 class LinearityTab(ttk.Frame):
@@ -344,8 +346,9 @@ class LinearityTab(ttk.Frame):
 
     # ==================== パターン生成 ====================
 
-    # 出荷試験用パターン (Ship mode)
-    SHIP_PATTERN_POSITION = [
+    # 出荷試験用パターン (Ship mode) - POS/NEGで異なるビット境界テストポイント
+    # Position POS: 0x00000→0xFFFFF (コード昇順, ビット境界はLSB側)
+    SHIP_PATTERN_POSITION_POS = [
         0x00000, 0x00001, 0x00002, 0x00003, 0x00004, 0x00007, 0x00008,
         0x0000F, 0x00010, 0x0001F, 0x00020, 0x0003F, 0x00040, 0x0007F,
         0x00080, 0x000FF, 0x00100, 0x001FF, 0x00200, 0x003FF, 0x00400,
@@ -354,7 +357,29 @@ class LinearityTab(ttk.Frame):
         0x3FFFF, 0x40000, 0x5FFFF, 0x60000, 0x7FFFF, 0x80000, 0x9FFFF,
         0xA0000, 0xBFFFF, 0xC0000, 0xDFFFF, 0xE0000, 0xFFFFF,
     ]
-    SHIP_PATTERN_LBC = [
+    # Position NEG: ビット境界はMSB側 (コード昇順スイープ)
+    SHIP_PATTERN_POSITION_NEG = [
+        0x00000, 0x1FFFF, 0x20000, 0x3FFFF, 0x40000, 0x5FFFF, 0x60000,
+        0x7FFFF, 0x80000, 0x9FFFF, 0xA0000, 0xBFFFF, 0xC0000, 0xDFFFF,
+        0xE0000, 0xEFFFF, 0xF0000, 0xF7FFF, 0xF8000, 0xFBFFF, 0xFC000,
+        0xFDFFF, 0xFE000, 0xFEFFF, 0xFF000, 0xFF7FF, 0xFF800, 0xFFBFF,
+        0xFFC00, 0xFFDFF, 0xFFE00, 0xFFEFF, 0xFFF00, 0xFFF7F, 0xFFF80,
+        0xFFFBF, 0xFFFC0, 0xFFFDF, 0xFFFE0, 0xFFFEF, 0xFFFF0, 0xFFFF7,
+        0xFFFF8, 0xFFFFB, 0xFFFFC, 0xFFFFD, 0xFFFFE, 0xFFFFF,
+    ]
+    # LBC POS: ビット境界はMSB側 (コード昇順スイープ)
+    SHIP_PATTERN_LBC_POS = [
+        0x0000, 0x0FFF, 0x1000, 0x1FFF, 0x2000, 0x2FFF, 0x3000,
+        0x3FFF, 0x4000, 0x4FFF, 0x5000, 0x5FFF, 0x6000, 0x6FFF,
+        0x7000, 0x7FFF, 0x8000, 0x8FFF, 0x9000, 0x9FFF, 0xA000,
+        0xAFFF, 0xB000, 0xBFFF, 0xC000, 0xCFFF, 0xD000, 0xDFFF,
+        0xE000, 0xEFFF, 0xF000, 0xF7FF, 0xF800, 0xFBFF, 0xFC00,
+        0xFDFF, 0xFE00, 0xFEFF, 0xFF00, 0xFF7F, 0xFF80, 0xFFBF,
+        0xFFC0, 0xFFDF, 0xFFE0, 0xFFEF, 0xFFF0, 0xFFF7, 0xFFF8,
+        0xFFFB, 0xFFFC, 0xFFFD, 0xFFFE, 0xFFFF,
+    ]
+    # LBC NEG: 0x0000→0xFFFF (コード昇順, ビット境界はLSB側)
+    SHIP_PATTERN_LBC_NEG = [
         0x0000, 0x0001, 0x0002, 0x0003, 0x0004, 0x0007, 0x0008,
         0x000F, 0x0010, 0x001F, 0x0020, 0x003F, 0x0040, 0x007F,
         0x0080, 0x00FF, 0x0100, 0x01FF, 0x0200, 0x03FF, 0x0400,
@@ -365,7 +390,7 @@ class LinearityTab(ttk.Frame):
         0xDFFF, 0xE000, 0xEFFF, 0xF000, 0xFFFF,
     ]
 
-    def _generate_pattern(self, bits):
+    def _generate_pattern(self, bits, pole='POS'):
         mode = self.pattern_mode.get()
         max_val = (1 << bits) - 1
 
@@ -383,9 +408,11 @@ class LinearityTab(ttk.Frame):
 
         if mode == 'Ship':
             if bits == 20:
-                return list(self.SHIP_PATTERN_POSITION)
+                return list(self.SHIP_PATTERN_POSITION_POS if pole == 'POS'
+                            else self.SHIP_PATTERN_POSITION_NEG)
             else:
-                return list(self.SHIP_PATTERN_LBC)
+                return list(self.SHIP_PATTERN_LBC_POS if pole == 'POS'
+                            else self.SHIP_PATTERN_LBC_NEG)
 
         n = int(self.num_points.get())
         if mode == 'Linear':
@@ -505,17 +532,8 @@ class LinearityTab(ttk.Frame):
                 center_hex = spec['center']
                 dmm_range = spec['dmm_range']
 
-                # パターン生成
-                try:
-                    pattern_values = self._generate_pattern(bits)
-                except ValueError as e:
-                    self._queue_update('log', (str(e), "ERROR"))
-                    continue
-
                 self._queue_update('log', (
                     f"--- {dac_name} ({bits}bit) 計測開始 ---", "INFO"))
-                self._queue_update('log', (
-                    f"計測点数: {len(pattern_values)}, 安定待ち: {settle_time}秒", "INFO"))
 
                 # DataGen: A固定モード設定
                 self._datagen_send(f"alt s sa {ci_cmd}")
@@ -531,6 +549,17 @@ class LinearityTab(ttk.Frame):
                         break
 
                     pole_cmd = 'p' if pole == 'POS' else 'n'
+
+                    # パターン生成 (出荷シーケンスはPOS/NEGで異なるパターン)
+                    try:
+                        sweep_values = self._generate_pattern(bits, pole)
+                    except ValueError as e:
+                        self._queue_update('log', (str(e), "ERROR"))
+                        continue
+
+                    self._queue_update('log', (
+                        f"  {pole} パターン: {len(sweep_values)}点, "
+                        f"安定待ち: {settle_time}秒", "INFO"))
 
                     for def_info in selected_defs:
                         if self._stop_event.is_set():
@@ -558,13 +587,7 @@ class LinearityTab(ttk.Frame):
                         self._datagen_set_value(center_hex, ci_cmd, pole_cmd)
                         time.sleep(settle_time)
 
-                        # 計測ループ (NEG側はコード順を逆にする)
-                        # POS: 000000→FFFFF (低→高電圧), NEG: FFFFF→000000 (低→高電圧)
-                        if pole == 'NEG':
-                            sweep_values = list(reversed(pattern_values))
-                        else:
-                            sweep_values = pattern_values
-
+                        # 計測ループ (POS/NEGそれぞれ専用パターンでスイープ)
                         x_vals = []
                         y_vals = []
                         total_pts = len(sweep_values)
@@ -608,14 +631,13 @@ class LinearityTab(ttk.Frame):
 
                         if is_ship:
                             # --- 出荷シーケンスモード: INL/DNL (Excelマクロ準拠) ---
-                            # NEGは逆順で計測したのでコード昇順にソート
-                            if pole == 'NEG':
-                                paired = sorted(zip(x_vals, y_vals))
-                                x_vals = [p[0] for p in paired]
-                                y_vals = [p[1] for p in paired]
+                            # コード昇順にソート (降順パターンの場合に対応)
+                            paired = sorted(zip(x_vals, y_vals))
+                            x_vals = [p[0] for p in paired]
+                            y_vals = [p[1] for p in paired]
 
                             ship_results = self._calculate_linearity_ship(
-                                x_vals, y_vals, bits, (pole == 'NEG'), dac_name)
+                                x_vals, y_vals, bits, dac_name)
 
                             criteria = self.SHIP_CRITERIA[dac_name]
                             inl_arr = np.array(ship_results['inl'])
@@ -845,7 +867,7 @@ class LinearityTab(ttk.Frame):
             'y_fit': y_fit.tolist(),
         }
 
-    def _calculate_linearity_ship(self, unsigned_vals, measured_v, bits, is_neg, dac_name):
+    def _calculate_linearity_ship(self, unsigned_vals, measured_v, bits, dac_name):
         """出荷試験用 INL/DNL計算 (Excelマクロ DacTestBench5K 準拠)
 
         - 係数: 端点フィット (last_V - first_V) / (last_signed - first_signed)
@@ -854,10 +876,7 @@ class LinearityTab(ttk.Frame):
         - DNL: INL[i+1] - INL[i] (コードステップ=1 の場合のみ)
         """
         offset_val = 2 ** (bits - 1)
-        if is_neg:
-            signed = np.array([offset_val - v for v in unsigned_vals], dtype=float)
-        else:
-            signed = np.array([v - offset_val for v in unsigned_vals], dtype=float)
+        signed = np.array([v - offset_val for v in unsigned_vals], dtype=float)
 
         y = np.array(measured_v, dtype=float)
 
@@ -1033,24 +1052,58 @@ class LinearityTab(ttk.Frame):
         center_align = Alignment(horizontal='center')
         right_align = Alignment(horizontal='right')
         inl_ref = '$F$3' if dac_name == 'Position' else '$H$3'
+        is_neg_display = (pole == 'NEG')
+
+        # NEG: B,C,D列はPOSパターンのコードを表示 (参照XLS準拠)
+        if is_neg_display:
+            if bits == 20:
+                display_codes = list(self.SHIP_PATTERN_POSITION_POS)
+            else:
+                display_codes = list(self.SHIP_PATTERN_LBC_POS)
+            # 表示順のINL/DNL計算 (Excel式と同等、NG色判定用)
+            disp_v = [measured_v[n_pts - 1 - j] for j in range(n_pts)]
+            disp_coeff = (disp_v[-1] - disp_v[0]) / (display_codes[-1] - display_codes[0])
+            disp_theoretical = [disp_v[0] + disp_coeff * (display_codes[j] - display_codes[0])
+                                for j in range(n_pts)]
+            v_per_lsb_disp = disp_coeff if dac_name == 'Position' else 10.0 / (2 ** (bits - 1))
+            disp_inl = [(disp_v[j] - disp_theoretical[j]) / v_per_lsb_disp for j in range(n_pts)]
+            disp_dnl = [None] * n_pts
+            for j in range(n_pts - 1):
+                if display_codes[j + 1] - display_codes[j] == 1:
+                    disp_dnl[j] = disp_inl[j + 1] - disp_inl[j]
+        else:
+            display_codes = None
+            disp_inl = ship_results['inl']
+            disp_dnl = ship_results['dnl']
+
+        offset_val = 2 ** (bits - 1)
         for i, uval in enumerate(unsigned_vals):
             r = first_r + i
-            signed_val = int(ship_results['signed'][i])
+
+            # NEG: コード列はPOSパターン、電圧列は測定順逆
+            if display_codes is not None:
+                disp_uval = display_codes[i]
+                disp_signed = disp_uval - offset_val
+                v_idx = n_pts - 1 - i
+            else:
+                disp_uval = uval
+                disp_signed = int(ship_results['signed'][i])
+                v_idx = i
 
             c_a = ws.cell(row=r, column=1, value=i + 1)                            # A: №
             c_a.font = data_font
             c_a.alignment = center_align
-            c_b = ws.cell(row=r, column=2, value=signed_val)                       # B: 設定DAC値
+            c_b = ws.cell(row=r, column=2, value=disp_signed)                      # B: 設定DAC値
             c_b.font = data_font
             c_b.alignment = center_align
-            c_c = ws.cell(row=r, column=3, value=uval)                             # C: unsigned
+            c_c = ws.cell(row=r, column=3, value=disp_uval)                        # C: unsigned
             c_c.font = data_font
             c_c.alignment = center_align
-            c_d = ws.cell(row=r, column=4, value=f"{uval & mask:0{hex_width}X}")   # D: HEX
+            c_d = ws.cell(row=r, column=4, value=f"{disp_uval & mask:0{hex_width}X}")  # D: HEX
             c_d.font = data_font
             c_d.alignment = center_align
 
-            c_e = ws.cell(row=r, column=5, value=measured_v[i])                    # E: 測定電圧
+            c_e = ws.cell(row=r, column=5, value=measured_v[v_idx])                # E: 測定電圧
             c_e.number_format = fmt_v
             c_e.font = data_font
             c_e.alignment = right_align
@@ -1064,16 +1117,14 @@ class LinearityTab(ttk.Frame):
             c_g = ws.cell(row=r, column=7)                                         # G: INL (式)
             c_g.value = f'=(E{r}-F{r})/{inl_ref}'
             c_g.number_format = fmt_err
-            inl_val = ship_results['inl'][i]
-            c_g.font = ng_font if abs(inl_val) > criteria['inl'] else data_font
+            c_g.font = ng_font if abs(disp_inl[i]) > criteria['inl'] else data_font
 
-            # H: DNL (式 - コードステップ=1の場合のみ)
-            if ship_results['dnl'][i] is not None:
+            # H: DNL (式 - 表示コードステップ=1の場合のみ)
+            if disp_dnl[i] is not None:
                 c_h = ws.cell(row=r, column=8)
                 c_h.value = f'=G{r + 1}-G{r}'
                 c_h.number_format = fmt_err
-                dnl_val = ship_results['dnl'][i]
-                c_h.font = ng_font if abs(dnl_val) > criteria['dnl'] else data_font
+                c_h.font = ng_font if abs(disp_dnl[i]) > criteria['dnl'] else data_font
 
             # データ行枠線
             for c in range(1, 9):
@@ -1119,14 +1170,18 @@ class LinearityTab(ttk.Frame):
                     left=medium if c == 6 else thin,
                     right=medium if c == 8 else thin)
 
-        # 合否判定行
+        # 合否判定行 (Excel数式 - 参照XLS準拠)
         r_judge = sum_start + 3
-        inl_arr = np.array(ship_results['inl'])
-        dnl_vals = [d for d in ship_results['dnl'] if d is not None]
+        r_plus = sum_start      # +最大誤差行
+        r_minus = sum_start + 1  # -最大誤差行
+        r_crit = sum_start + 2   # 判定基準行
+
+        # NG色判定用 (フォント色を事前決定)
+        inl_arr = np.array(disp_inl)
+        dnl_vals = [d for d in disp_dnl if d is not None]
         dnl_arr = np.array(dnl_vals) if dnl_vals else np.array([0.0])
         inl_ok = float(np.max(np.abs(inl_arr))) <= criteria['inl']
         dnl_ok = float(np.max(np.abs(dnl_arr))) <= criteria['dnl'] if len(dnl_vals) > 0 else True
-        judge_str = "OK" if (inl_ok and dnl_ok) else "NG"
 
         judge_label_font = Font(size=11)
         judge_value_font = Font(size=26, color='FF0000') if not (inl_ok and dnl_ok) else Font(size=26)
@@ -1135,7 +1190,11 @@ class LinearityTab(ttk.Frame):
         c_f_judge.alignment = Alignment(horizontal='center', vertical='center')
         ws.row_dimensions[r_judge].height = 33.6
         ws.merge_cells(f'G{r_judge}:H{r_judge}')
-        c_judge = ws.cell(row=r_judge, column=7, value=judge_str)
+        judge_formula = (f'=IF((ABS(G{r_plus})<G{r_crit})'
+                         f'+(ABS(H{r_plus})<H{r_crit})'
+                         f'+(ABS(G{r_minus})<G{r_crit})'
+                         f'+(ABS(H{r_minus})<H{r_crit})=4,"OK","NG")')
+        c_judge = ws.cell(row=r_judge, column=7, value=judge_formula)
         c_judge.font = judge_value_font
         c_judge.alignment = center_align
         for c in range(6, 9):
@@ -1143,6 +1202,64 @@ class LinearityTab(ttk.Frame):
                 top=thin, bottom=medium,
                 left=medium if c == 6 else thin,
                 right=medium if c == 8 else thin)
+
+        # --- グラフ作成 (参照XLS準拠) ---
+        # 主チャート (INL: 左Y軸)
+        chart = LineChart()
+        chart.title = f"{def_info['name']} {pole} {dac_name} 直線性({n_pts}点シーケンシャル測定)"
+        chart.width = 19.5
+        chart.height = 17.5
+
+        # 左Y軸: INL(LSB)
+        chart.y_axis.title = "INL(LSB)"
+        chart.y_axis.scaling.min = -1.5
+        chart.y_axis.scaling.max = 1.5
+        chart.y_axis.majorUnit = 0.25
+        chart.y_axis.majorGridlines = ChartLines()
+        chart.y_axis.minorGridlines = None
+        chart.y_axis.numFmt = '0.00_ '
+        chart.y_axis.crossBetween = "midCat"
+
+        # X軸: ラベルを上部に配置、2つおきに表示
+        chart.x_axis.title = None
+        chart.x_axis.majorGridlines = None
+        chart.x_axis.tickLblPos = 'high'
+        chart.x_axis.tickLblSkip = 2
+
+        # INL系列: マゼンタ線 + マゼンタ四角マーカー
+        inl_values = Reference(ws, min_col=7, min_row=first_r, max_row=last_r)
+        inl_series = Series(inl_values, title="INL")
+        inl_series.graphicalProperties.line.solidFill = "FF00FF"
+        inl_series.marker.symbol = "square"
+        inl_series.marker.size = 5
+        inl_series.marker.graphicalProperties.solidFill = "FF00FF"
+        chart.append(inl_series)
+
+        # 副チャート (DNL: 右Y軸)
+        chart2 = LineChart()
+        chart2.y_axis.title = "DNL(LSB)"
+        chart2.y_axis.scaling.min = -1.5
+        chart2.y_axis.scaling.max = 1.5
+        chart2.y_axis.majorUnit = 0.25
+        chart2.y_axis.numFmt = '0.00_ '
+        chart2.y_axis.axId = 200
+
+        # DNL系列: 線なし(マーカーのみ) + ネイビーダイヤモンドマーカー
+        dnl_values = Reference(ws, min_col=8, min_row=first_r, max_row=last_r)
+        dnl_series = Series(dnl_values, title="DNL")
+        dnl_series.graphicalProperties.line.noFill = True
+        dnl_series.marker.symbol = "diamond"
+        dnl_series.marker.size = 5
+        dnl_series.marker.graphicalProperties.solidFill = "000080"
+        chart2.append(dnl_series)
+
+        # チャート結合 (DNLを第2軸に)
+        chart += chart2
+
+        # 凡例: 下部
+        chart.legend.position = 'b'
+
+        ws.add_chart(chart, "J1")
 
         # --- ファイル保存 ---
         save_dir = self.save_dir.get()
