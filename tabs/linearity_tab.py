@@ -20,7 +20,7 @@ class LinearityTab(ttk.Frame):
     # DAC仕様定数
     DAC_SPECS = {
         'Position': {'bits': 20, 'span': 20.0, 'ci': 'ci', 'center': '80000', 'dmm_range': '10'},
-        'LBC':      {'bits': 16, 'span': 2.0,  'ci': 'cii', 'center': '80000', 'dmm_range': '1'},
+        'LBC':      {'bits': 16, 'span': 2.0,  'ci': 'cii', 'center': '80000', 'dmm_range': '10'},
     }
 
     # 出荷試験 (Ship) NG判定基準 (Excelマクロ DacTestBench5K 準拠)
@@ -47,8 +47,7 @@ class LinearityTab(ttk.Frame):
         self.pattern_mode = tk.StringVar(value='Ship')
         self.num_points = tk.StringVar(value='64')
         self.pattern_file = tk.StringVar(value='')
-        self.position_var = tk.BooleanVar(value=True)
-        self.lbc_var = tk.BooleanVar(value=False)
+        self.dac_var = tk.StringVar(value='Position')
         self.settle_time_var = tk.DoubleVar(value=0.2)
         self.th_gain = tk.DoubleVar(value=0.01)
         self.th_offset = tk.DoubleVar(value=10.0)
@@ -114,8 +113,8 @@ class LinearityTab(ttk.Frame):
         # --- DAC設定 ---
         dac_frame = ttk.LabelFrame(parent, text="DAC設定", padding=8)
         dac_frame.pack(fill=tk.X, pady=(0, 5))
-        ttk.Checkbutton(dac_frame, text="Position (20bit)", variable=self.position_var).pack(anchor=tk.W)
-        ttk.Checkbutton(dac_frame, text="LBC (16bit)", variable=self.lbc_var).pack(anchor=tk.W)
+        ttk.Radiobutton(dac_frame, text="Position (20bit)", variable=self.dac_var, value='Position').pack(anchor=tk.W)
+        ttk.Radiobutton(dac_frame, text="LBC (16bit)", variable=self.dac_var, value='LBC').pack(anchor=tk.W)
 
         settle_frame = ttk.Frame(dac_frame)
         settle_frame.pack(fill=tk.X, pady=2)
@@ -287,8 +286,13 @@ class LinearityTab(ttk.Frame):
                 lin = config.get('linearity', {})
                 self.pattern_mode.set(lin.get('pattern_mode', 'Ship'))
                 self.num_points.set(lin.get('num_points', '64'))
-                self.position_var.set(lin.get('position', True))
-                self.lbc_var.set(lin.get('lbc', False))
+                dac_type = lin.get('dac_type')
+                if dac_type:
+                    self.dac_var.set(dac_type)
+                elif lin.get('lbc', False):
+                    self.dac_var.set('LBC')
+                else:
+                    self.dac_var.set('Position')
                 self.settle_time_var.set(lin.get('settle_time', 0.2))
                 self.th_gain.set(lin.get('th_gain', 0.01))
                 self.th_offset.set(lin.get('th_offset', 10.0))
@@ -306,8 +310,7 @@ class LinearityTab(ttk.Frame):
             config['linearity'] = {
                 'pattern_mode': self.pattern_mode.get(),
                 'num_points': self.num_points.get(),
-                'position': self.position_var.get(),
-                'lbc': self.lbc_var.get(),
+                'dac_type': self.dac_var.get(),
                 'settle_time': self.settle_time_var.get(),
                 'th_gain': self.th_gain.get(),
                 'th_offset': self.th_offset.get(),
@@ -326,7 +329,14 @@ class LinearityTab(ttk.Frame):
         is_ship = mode == 'Ship'
         self.file_entry.config(state=tk.NORMAL if is_file else tk.DISABLED)
         self.file_browse_btn.config(state=tk.NORMAL if is_file else tk.DISABLED)
-        self.pts_combo.config(state=tk.DISABLED if (is_file or is_ship) else 'readonly')
+        if is_file or is_ship:
+            self.pts_combo.config(state=tk.NORMAL)
+            self.num_points.set('')
+            self.pts_combo.config(state=tk.DISABLED)
+        else:
+            if not self.num_points.get():
+                self.num_points.set('1024')
+            self.pts_combo.config(state='readonly')
 
     def _browse_pattern_file(self):
         path = filedialog.askopenfilename(
@@ -365,18 +375,8 @@ class LinearityTab(ttk.Frame):
         0xFFFF8, 0xFFFFB, 0xFFFFC, 0xFFFFD, 0xFFFFE, 0xFFFFF,
     ]
     # LBC POS: ビット境界はMSB側 (コード昇順スイープ)
-    SHIP_PATTERN_LBC_POS = [
-        0x0000, 0x0FFF, 0x1000, 0x1FFF, 0x2000, 0x2FFF, 0x3000,
-        0x3FFF, 0x4000, 0x4FFF, 0x5000, 0x5FFF, 0x6000, 0x6FFF,
-        0x7000, 0x7FFF, 0x8000, 0x8FFF, 0x9000, 0x9FFF, 0xA000,
-        0xAFFF, 0xB000, 0xBFFF, 0xC000, 0xCFFF, 0xD000, 0xDFFF,
-        0xE000, 0xEFFF, 0xF000, 0xF7FF, 0xF800, 0xFBFF, 0xFC00,
-        0xFDFF, 0xFE00, 0xFEFF, 0xFF00, 0xFF7F, 0xFF80, 0xFFBF,
-        0xFFC0, 0xFFDF, 0xFFE0, 0xFFEF, 0xFFF0, 0xFFF7, 0xFFF8,
-        0xFFFB, 0xFFFC, 0xFFFD, 0xFFFE, 0xFFFF,
-    ]
-    # LBC NEG: 0x0000→0xFFFF (コード昇順, ビット境界はLSB側)
-    SHIP_PATTERN_LBC_NEG = [
+    # LBC POS/NEG共通パターン (54点, LSB側ビット境界テスト)
+    SHIP_PATTERN_LBC = [
         0x0000, 0x0001, 0x0002, 0x0003, 0x0004, 0x0007, 0x0008,
         0x000F, 0x0010, 0x001F, 0x0020, 0x003F, 0x0040, 0x007F,
         0x0080, 0x00FF, 0x0100, 0x01FF, 0x0200, 0x03FF, 0x0400,
@@ -410,8 +410,11 @@ class LinearityTab(ttk.Frame):
                 else:
                     return list(reversed(self.SHIP_PATTERN_POSITION_NEG))
             else:
-                return list(self.SHIP_PATTERN_LBC_POS if pole == 'POS'
-                            else self.SHIP_PATTERN_LBC_NEG)
+                if pole == 'POS':
+                    max_val = (1 << bits) - 1
+                    return [max_val - v for v in self.SHIP_PATTERN_LBC]
+                else:
+                    return list(self.SHIP_PATTERN_LBC)
 
         n = int(self.num_points.get())
         if mode == 'Linear':
@@ -434,10 +437,6 @@ class LinearityTab(ttk.Frame):
         if not self.gpib_scanner.connected:
             messagebox.showerror("エラー", "スキャナー (3499B) が未接続です")
             return
-        if not self.position_var.get() and not self.lbc_var.get():
-            messagebox.showwarning("警告", "Position または LBC を選択してください")
-            return
-
         defs = self._get_selected_defs()
         if not defs:
             messagebox.showwarning("警告", "DEFを選択してください")
@@ -514,11 +513,8 @@ class LinearityTab(ttk.Frame):
             self._scanner_cpon()
             time.sleep(0.5)
 
-            dac_types = []
-            if self.position_var.get():
-                dac_types.append('Position')
-            if self.lbc_var.get():
-                dac_types.append('LBC')
+            dac_types = [self.dac_var.get()]
+            is_ship = self.pattern_mode.get() == 'Ship'
 
             for dac_name in dac_types:
                 if self._stop_event.is_set():
@@ -543,24 +539,15 @@ class LinearityTab(ttk.Frame):
                 self.gpib_dmm.write(f"DCV {dmm_range}")
                 time.sleep(0.3)
 
-                for pole in ['POS', 'NEG']:
+                for def_info in selected_defs:
                     if self._stop_event.is_set():
                         break
 
-                    pole_cmd = 'p' if pole == 'POS' else 'n'
+                    serial_no = self._get_serial_number(def_info['index'])
+                    ship_pole_results = {}
+                    ship_timestamp = time.strftime('%Y%m%d_%H%M%S')
 
-                    # パターン生成 (出荷シーケンスはPOS/NEGで異なるパターン)
-                    try:
-                        sweep_values = self._generate_pattern(bits, pole)
-                    except ValueError as e:
-                        self._queue_update('log', (str(e), "ERROR"))
-                        continue
-
-                    self._queue_update('log', (
-                        f"  {pole} パターン: {len(sweep_values)}点, "
-                        f"安定待ち: {settle_time}秒", "INFO"))
-
-                    for def_info in selected_defs:
+                    for pole in ['POS', 'NEG']:
                         if self._stop_event.is_set():
                             break
 
@@ -570,6 +557,19 @@ class LinearityTab(ttk.Frame):
                             self._queue_update('log', (
                                 f"{def_info['name']} {pole}: CH未設定、スキップ", "WARNING"))
                             continue
+
+                        pole_cmd = 'p' if pole == 'POS' else 'n'
+
+                        # パターン生成 (出荷シーケンスはPOS/NEGで異なるパターン)
+                        try:
+                            sweep_values = self._generate_pattern(bits, pole)
+                        except ValueError as e:
+                            self._queue_update('log', (str(e), "ERROR"))
+                            continue
+
+                        self._queue_update('log', (
+                            f"  {pole} パターン: {len(sweep_values)}点, "
+                            f"安定待ち: {settle_time}秒", "INFO"))
 
                         ch_number = channel.replace("CH", "")
                         channel_addr = f"@{self.scanner_slot}{ch_number}"
@@ -632,9 +632,6 @@ class LinearityTab(ttk.Frame):
                                 "計測点不足、解析スキップ", "WARNING"))
                             continue
 
-                        serial_no = self._get_serial_number(def_info['index'])
-                        is_ship = self.pattern_mode.get() == 'Ship'
-
                         if is_ship:
                             # --- 出荷シーケンスモード: INL/DNL (Excelマクロ準拠) ---
                             # コード昇順にソート (降順パターンの場合に対応)
@@ -670,16 +667,27 @@ class LinearityTab(ttk.Frame):
                                 "ERROR" if judge == 'NG' else "SUCCESS"
                             ))
 
-                            # XLSX保存
+                            # XLSX保存 (POS: 最終ファイル名, NEG: 一時ファイル)
+                            save_dir = self.save_dir.get()
+                            os.makedirs(save_dir, exist_ok=True)
+                            base_name = (f"{serial_no}_{dac_name}_linearity_"
+                                         f"出荷シーケンス_{ship_timestamp}")
+                            if pole == 'POS':
+                                xlsx_filepath = os.path.join(
+                                    save_dir, base_name + '.xlsx')
+                            else:
+                                xlsx_filepath = os.path.join(
+                                    save_dir, base_name + '_tmp.xlsx')
+
                             xlsx_path, _ = self._save_xlsx_ship(
                                 ship_results, x_vals, y_vals,
-                                dac_name, pole, def_info, serial_no, bits)
+                                dac_name, pole, def_info, serial_no, bits,
+                                filepath=xlsx_filepath)
                             if xlsx_path:
                                 self._queue_update('log', (
                                     f"  XLSX保存: {xlsx_path}", "SUCCESS"))
 
-                            # グラフ・サマリー更新をキュー
-                            self._queue_update('result_ship', {
+                            pole_data = {
                                 'def_name': def_info['name'],
                                 'dac_name': dac_name,
                                 'pole': pole,
@@ -691,7 +699,11 @@ class LinearityTab(ttk.Frame):
                                 'serial_no': serial_no,
                                 'bits': bits,
                                 'xlsx_path': xlsx_path,
-                            })
+                            }
+                            ship_pole_results[pole] = pole_data
+
+                            # サマリー更新 + PNG表示を即時キュー
+                            self._queue_update('ship_pole_done', pole_data)
 
                         else:
                             # --- 通常モード: Gain/Offset/Error ---
@@ -740,6 +752,22 @@ class LinearityTab(ttk.Frame):
                                 'bits': bits,
                                 'span': span,
                             })
+
+                    # 出荷シーケンス: POS/NEGを1ファイルに統合
+                    if is_ship:
+                        if len(ship_pole_results) == 2:
+                            self._queue_update('merge_ship_xlsx', ship_pole_results)
+                        elif len(ship_pole_results) == 1:
+                            # 片方のみ: NEG一時ファイルならリネーム
+                            only_data = list(ship_pole_results.values())[0]
+                            xp = only_data.get('xlsx_path', '')
+                            if '_tmp.xlsx' in xp:
+                                final = xp.replace('_tmp.xlsx', '.xlsx')
+                                try:
+                                    os.rename(xp, final)
+                                    only_data['xlsx_path'] = final
+                                except Exception:
+                                    pass
 
             # 終了処理
             self._scanner_cpon()
@@ -972,7 +1000,8 @@ class LinearityTab(ttk.Frame):
             return None
 
     def _save_xlsx_ship(self, ship_results, unsigned_vals, measured_v,
-                        dac_name, pole, def_info, serial_no, bits):
+                        dac_name, pole, def_info, serial_no, bits,
+                        filepath=None):
         """出荷試験結果をテンプレートXLSXに書き込み保存"""
         template_path = self._get_template_path(dac_name)
         if not template_path:
@@ -990,12 +1019,34 @@ class LinearityTab(ttk.Frame):
         ws.title = new_name
         self._update_chart_refs(ws, old_name, new_name)
 
-        # E列に測定電圧を書き込み（NEGは逆順）
+        # POS: 逆順+補数でNEG等価コード昇順、測定電圧は逆順(+V先頭)
+        # NEG: 昇順のまま
         n_pts = len(measured_v)
-        is_neg = (pole == 'NEG')
+        max_val = (1 << bits) - 1
+        offset_val = 2 ** (bits - 1)
+        shift = 20 - bits
+        if pole == 'POS':
+            unsigned_vals = list(reversed(unsigned_vals))
+            measured_v = list(reversed(measured_v))
+
         for i in range(n_pts):
-            v_idx = n_pts - 1 - i if is_neg else i
-            ws.cell(row=7 + i, column=5, value=measured_v[v_idx])
+            uval = unsigned_vals[i]
+            if pole == 'POS':
+                code = max_val - uval  # NEG等価コード
+            else:
+                code = uval
+            row = 7 + i
+            ws.cell(row=row, column=1, value=i + 1).number_format = '0'
+            ws.cell(row=row, column=2, value=code - offset_val).number_format = '0'
+            ws.cell(row=row, column=3, value=code).number_format = '0'
+            if bits == 20:
+                hex_str = f"{code & 0xFFFFF:05X}"
+            else:
+                hex_str = f"{code & 0xFFFF:04X}"
+            hex_cell = ws.cell(row=row, column=4, value=hex_str)
+            hex_cell.number_format = '@'
+            hex_cell.quotePrefix = True
+            ws.cell(row=row, column=5, value=measured_v[i])
 
         # チャートタイトル変更
         chart = ws._charts[0]
@@ -1004,12 +1055,13 @@ class LinearityTab(ttk.Frame):
         runs[2].t = f"({n_pts}"
 
         # ファイル保存
-        save_dir = self.save_dir.get()
-        os.makedirs(save_dir, exist_ok=True)
-        timestamp = time.strftime('%Y%m%d_%H%M%S')
-        filename = (f"{serial_no}_{dac_name}_{pole}_linearity_"
-                    f"出荷シーケンス_{timestamp}.xlsx")
-        filepath = os.path.join(save_dir, filename)
+        if filepath is None:
+            save_dir = self.save_dir.get()
+            os.makedirs(save_dir, exist_ok=True)
+            timestamp = time.strftime('%Y%m%d_%H%M%S')
+            filename = (f"{serial_no}_{dac_name}_{pole}_linearity_"
+                        f"出荷シーケンス_{timestamp}.xlsx")
+            filepath = os.path.join(save_dir, filename)
 
         try:
             wb.save(filepath)
@@ -1130,9 +1182,12 @@ class LinearityTab(ttk.Frame):
         if not xlsx_path or not os.path.exists(xlsx_path):
             return None
 
+        pole = data.get('pole', '')
         base = os.path.splitext(xlsx_path)[0]
-        chart_png = base + '_chart.png'
-        table_png = base + '_table.png'
+        if base.endswith('_tmp'):
+            base = base[:-4]
+        chart_png = f"{base}_{pole}_chart.png"
+        table_png = f"{base}_{pole}_table.png"
 
         try:
             import win32com.client
@@ -1171,6 +1226,45 @@ class LinearityTab(ttk.Frame):
                 f"  PNGエクスポートエラー: {e}", "WARNING"))
             return None
 
+    def _merge_ship_xlsx(self, pole_results):
+        """POS/NEGのXLSXを1ファイルに統合 (PNGは各pole完了時に既にエクスポート済み)"""
+        pos_xlsx = pole_results.get('POS', {}).get('xlsx_path')
+        neg_xlsx = pole_results.get('NEG', {}).get('xlsx_path')
+
+        if not pos_xlsx or not neg_xlsx:
+            return
+
+        try:
+            import win32com.client
+
+            excel = win32com.client.DispatchEx("Excel.Application")
+            excel.Visible = False
+            excel.DisplayAlerts = False
+            try:
+                wb_pos = excel.Workbooks.Open(os.path.abspath(pos_xlsx))
+                wb_neg = excel.Workbooks.Open(os.path.abspath(neg_xlsx))
+
+                # NEGシートをPOSファイルにコピー
+                wb_neg.Sheets(1).Copy(None, wb_pos.Sheets(wb_pos.Sheets.Count))
+
+                wb_pos.Save()
+                wb_neg.Close(False)
+                wb_pos.Close(False)
+            finally:
+                excel.Quit()
+
+            # NEG一時ファイル削除
+            try:
+                if os.path.exists(neg_xlsx):
+                    os.remove(neg_xlsx)
+            except Exception:
+                pass
+
+            self.log(f"  XLSX統合完了: {pos_xlsx}", "SUCCESS")
+
+        except Exception as e:
+            self.log(f"  XLSX統合エラー: {e}", "WARNING")
+
     # ==================== 更新キュー・ポーリング ====================
     def _queue_update(self, msg_type, data):
         """ワーカースレッドからUI更新をキューに追加"""
@@ -1202,7 +1296,7 @@ class LinearityTab(ttk.Frame):
                         f"{res['max_error']:.3f}", res['judge']
                     ), tags=(tag,))
                     self._show_graph(data)
-                elif msg_type == 'result_ship':
+                elif msg_type == 'ship_pole_done':
                     tag = 'ng' if data['judge'] == 'NG' else 'ok'
                     self.summary_tree.insert('', 'end', values=(
                         data['def_name'], data['dac_name'], data['pole'],
@@ -1213,6 +1307,8 @@ class LinearityTab(ttk.Frame):
                     if png_path:
                         self.log(f"  PNG保存: {png_path}", "SUCCESS")
                         self._show_png(png_path)
+                elif msg_type == 'merge_ship_xlsx':
+                    self._merge_ship_xlsx(data)
                 elif msg_type == 'done':
                     self._finish()
                     return

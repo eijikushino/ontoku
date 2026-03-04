@@ -23,14 +23,14 @@ POSITION_POS = [
 ]
 
 LBC_POS = [
-    0x0000, 0x0FFF, 0x1000, 0x1FFF, 0x2000, 0x2FFF, 0x3000,
-    0x3FFF, 0x4000, 0x4FFF, 0x5000, 0x5FFF, 0x6000, 0x6FFF,
-    0x7000, 0x7FFF, 0x8000, 0x8FFF, 0x9000, 0x9FFF, 0xA000,
-    0xAFFF, 0xB000, 0xBFFF, 0xC000, 0xCFFF, 0xD000, 0xDFFF,
-    0xE000, 0xEFFF, 0xF000, 0xF7FF, 0xF800, 0xFBFF, 0xFC00,
-    0xFDFF, 0xFE00, 0xFEFF, 0xFF00, 0xFF7F, 0xFF80, 0xFFBF,
-    0xFFC0, 0xFFDF, 0xFFE0, 0xFFEF, 0xFFF0, 0xFFF7, 0xFFF8,
-    0xFFFB, 0xFFFC, 0xFFFD, 0xFFFE, 0xFFFF,
+    0x0000, 0x0001, 0x0002, 0x0003, 0x0004, 0x0007, 0x0008,
+    0x000F, 0x0010, 0x001F, 0x0020, 0x003F, 0x0040, 0x007F,
+    0x0080, 0x00FF, 0x0100, 0x01FF, 0x0200, 0x03FF, 0x0400,
+    0x07FF, 0x0800, 0x0FFF, 0x1000, 0x1FFF, 0x2000, 0x2FFF,
+    0x3000, 0x3FFF, 0x4000, 0x4FFF, 0x5000, 0x5FFF, 0x6000,
+    0x6FFF, 0x7000, 0x7FFF, 0x8000, 0x8FFF, 0x9000, 0x9FFF,
+    0xA000, 0xAFFF, 0xB000, 0xBFFF, 0xC000, 0xCFFF, 0xD000,
+    0xDFFF, 0xE000, 0xEFFF, 0xF000, 0xFFFF,
 ]
 
 CRITERIA = {
@@ -183,14 +183,15 @@ def create_lbc_template():
     ws['F3'].number_format = fmt_sci
     ws['G3'] = "Position　１LSB"
     ws['G3'].font = JP_FONT_BOLD
-    ws['H3'] = 10.0 / (2 ** (bits - 1))
+    ws['H3'] = '=IF(ABS(E7)>3,160/2^19,160/SQRT(2)/2^19)'
     ws['H3'].font = JP_FONT_BOLD
+    ws['H3'].number_format = '##0.0E+0'
 
     # ── Headers (Row 5) ──
-    ws['G5'] = '対Position INL'
+    ws['G5'] = 'INL'
     ws['G5'].font = JP_FONT_BOLD
     ws['G5'].alignment = Alignment(horizontal='center', vertical='center')
-    ws['H5'] = '対Position DNL'
+    ws['H5'] = 'DNL'
     ws['H5'].font = JP_FONT_BOLD
     ws['H5'].alignment = Alignment(horizontal='center', vertical='center')
 
@@ -209,6 +210,8 @@ def create_lbc_template():
             cell.border = Border()
             cell.number_format = 'General'
             cell.alignment = Alignment()
+        # 行の高さをリセット (Position判定行の33.6を解消)
+        ws.row_dimensions[r].height = None
 
     # ── 新データ行 (54点) ──
     for i, uval in enumerate(LBC_POS):
@@ -315,6 +318,16 @@ def create_lbc_template():
     chart = ws._charts[0]
     chart._charts[0].series[0].val.numRef.f = f"'T'!$G${first_r}:$G${lbc_last_r}"
     chart._charts[1].series[0].val.numRef.f = f"'T'!$H${first_r}:$H${lbc_last_r}"
+
+    # ── グラフ縦軸を±0.5 LSB、0.1刻みに設定（両軸） ──
+    chart.y_axis.scaling.min = -0.5
+    chart.y_axis.scaling.max = 0.5
+    chart.y_axis.majorUnit = 0.1
+    for child_chart in chart._charts:
+        if hasattr(child_chart, 'y_axis'):
+            child_chart.y_axis.scaling.min = -0.5
+            child_chart.y_axis.scaling.max = 0.5
+            child_chart.y_axis.majorUnit = 0.1
 
     # チャートタイトルの点数を更新
     runs = chart.title.tx.rich.paragraphs[0].r

@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.39] - 2026-03-04
+### 変更
+- DAC設定をチェックボックスからラジオボタンに変更（Position/LBC排他選択）
+- POS/NEG結果を1ファイル・2シートに統合（Excel COM経由でシートコピー）
+- POS側B/C/D列をNEG等価コード（補数）で表示、E列は測定電圧維持
+- LBC HEXコードを4桁表示に変更（右端の余計な0を除去）
+- LBC POSパターンをreversedから補数方式（max_val - code）に修正
+- Ship/Fileモード時に計測点数表示をクリア（再有効化時デフォルト1024）
+### 改善
+- 各pole計測完了時にPNG即時表示（統合完了を待たない）
+- セル書式を明示設定（数値列: '0'、HEX列: '@' + quotePrefix）
+
 ## [1.38] - 2026-03-04
 ### 変更
 - LBCデータセットを上詰め（16bit→4bit左シフトで20bitレジスタ上位に配置）

@@ -66,10 +66,9 @@
     },
     "linearity": {
         "pattern_mode": "Ship",
-        "num_points": "32",
-        "position": false,
-        "lbc": true,
-        "settle_time": 0.2,
+        "num_points": "",
+        "dac_type": "LBC",
+        "settle_time": 0.1,
         "th_gain": 0.01,
         "th_offset": 10.0,
         "th_error": 1.5,
