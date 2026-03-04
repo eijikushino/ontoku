@@ -15,12 +15,13 @@ from gpib_controller import GPIBController
 from tabs.dmm3458a_tab import DMM3458ATab
 from serial_manager import SerialManager
 from about_dialog import show_about_dialog
+from version import __version__
 
 class MainApplication(tk.Tk):
     def __init__(self):
         super().__init__()
-        
-        self.title("DEF Command Set App")
+
+        self.title(f"DEF Command Set App v{__version__}")
         self.geometry("900x700")
         
         # ウィンドウを閉じる際の処理

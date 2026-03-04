@@ -5,16 +5,13 @@ import threading
 import queue
 import time
 import os
+import sys
 import json
 import random
 import numpy as np
 import matplotlib
 import matplotlib.pyplot as plt
-from openpyxl import Workbook
-from openpyxl.styles import Font, Border, Side, Alignment, numbers
-from openpyxl.utils import get_column_letter
-from openpyxl.chart import LineChart, Reference, Series
-from openpyxl.chart.axis import ChartLines
+import openpyxl
 
 
 class LinearityTab(ttk.Frame):
@@ -609,8 +606,14 @@ class LinearityTab(ttk.Frame):
                                 x_vals.append(val)
                                 y_vals.append(voltage)
                                 self._queue_update('voltage', f"{voltage:.6f} V")
+                                self._queue_update('log', (
+                                    f"  [{idx+1}/{total_pts}] {hex_str} → {voltage:.6f} V",
+                                    "INFO"))
                             else:
                                 self._queue_update('voltage', "--- V")
+                                self._queue_update('log', (
+                                    f"  [{idx+1}/{total_pts}] {hex_str} → 計測失敗",
+                                    "WARNING"))
 
                             # 進捗更新
                             self._queue_update('progress', (idx + 1, total_pts))
@@ -684,6 +687,7 @@ class LinearityTab(ttk.Frame):
                                 'x_vals': x_vals,
                                 'serial_no': serial_no,
                                 'bits': bits,
+                                'xlsx_path': xlsx_path,
                             })
 
                         else:
@@ -963,317 +967,96 @@ class LinearityTab(ttk.Frame):
 
     def _save_xlsx_ship(self, ship_results, unsigned_vals, measured_v,
                         dac_name, pole, def_info, serial_no, bits):
-        """出荷試験結果をExcelマクロと同じxlsx形式で保存（セル参照式付き）"""
-        wb = Workbook()
+        """出荷試験結果をテンプレートXLSXに書き込み保存"""
+        template_path = self._get_template_path(dac_name)
+        if not template_path:
+            self._queue_update('log', (
+                f"テンプレートが見つかりません: linearity_{dac_name.lower()}.xlsx",
+                "ERROR"))
+            return None, False
+
+        wb = openpyxl.load_workbook(template_path)
         ws = wb.active
-        ws.title = f"{serial_no}{pole[0]}"[:31]
 
-        n_pts = len(unsigned_vals)
-        first_r = 7          # 最初のデータ行 (Excel 1-indexed)
-        last_r = first_r + n_pts - 1
-        hex_width = 5 if bits == 20 else 4
-        mask = (1 << bits) - 1
-        criteria = self.SHIP_CRITERIA[dac_name]
+        # シート名変更 + チャート参照更新
+        old_name = ws.title
+        new_name = f"{serial_no}{pole[0]}"[:31]
+        ws.title = new_name
+        self._update_chart_refs(ws, old_name, new_name)
 
-        # --- スタイル定義 ---
-        bold_font = Font(size=9)
-        data_font = Font(size=8)
-        ng_font = Font(size=8, color='FF0000')
-        coeff_font = Font(size=9)
-        thin = Side(style='thin')
-        medium = Side(style='medium')
+        # E列に測定電圧を書き込み（NEGは逆順）
+        n_pts = len(measured_v)
+        is_neg = (pole == 'NEG')
+        for i in range(n_pts):
+            v_idx = n_pts - 1 - i if is_neg else i
+            ws.cell(row=7 + i, column=5, value=measured_v[v_idx])
 
-        fmt_v = '0.000000_ '     # 電圧 6桁
-        fmt_err = '0.00_ '       # INL/DNL 2桁
-        fmt_sci = '##0.0E+0'     # 係数 科学表記
+        # チャートタイトル変更
+        chart = ws._charts[0]
+        runs = chart.title.tx.rich.paragraphs[0].r
+        runs[0].t = f"{serial_no} {pole} {dac_name} "
+        runs[2].t = f"({n_pts}"
 
-        # --- 列幅設定 ---
-        col_widths = {'A': 5, 'B': 12, 'C': 12, 'D': 10, 'E': 15, 'F': 15, 'G': 15, 'H': 15}
-        for col_letter, w in col_widths.items():
-            ws.column_dimensions[col_letter].width = w
-
-        # --- B,C列を非表示 ---
-        ws.column_dimensions['B'].hidden = True
-        ws.column_dimensions['C'].hidden = True
-
-        # --- Row 3: 理論直線係数 (式) ---
-        ws['E3'] = "理論直線係数"
-        ws['E3'].font = bold_font
-        ws['F3'] = f'=(E{last_r}-E{first_r})/(C{last_r}-C{first_r})'
-        ws['F3'].number_format = fmt_sci
-        ws['F3'].font = coeff_font
-        if dac_name == 'LBC':
-            ws['G3'] = "Position　１LSB"
-            ws['G3'].font = bold_font
-            ws['H3'] = 10.0 / (2 ** (bits - 1))
-            ws['H3'].font = coeff_font
-
-        # --- Headers (Row 5-6) ---
-        headers_r5 = {
-            'A': '№', 'D': 'コード', 'E': '測定電圧(V)', 'F': '理論電圧(V)',
-            'G': '対Position INL' if dac_name == 'LBC' else 'INL',
-            'H': '対Position DNL' if dac_name == 'LBC' else 'DNL',
-        }
-        headers_r6 = {'B': '設定DAC値', 'G': '誤差(LSB)', 'H': '誤差(LSB)'}
-        for col, text in headers_r5.items():
-            cell = ws[f'{col}5']
-            cell.value = text
-            cell.font = bold_font
-            cell.alignment = Alignment(horizontal='center', vertical='center')
-        for col, text in headers_r6.items():
-            cell = ws[f'{col}6']
-            cell.value = text
-            cell.font = bold_font
-            cell.alignment = Alignment(horizontal='center', vertical='center')
-
-        # --- ヘッダー結合セル (参照XLSに合わせる) ---
-        ws.merge_cells('A5:A6')
-        ws.merge_cells('D5:D6')
-        ws.merge_cells('E5:E6')
-        ws.merge_cells('F5:F6')
-
-        # --- ヘッダー枠線 (Row 5-6, A-H) ---
-        for r in [5, 6]:
-            for c in range(1, 9):
-                cell = ws.cell(row=r, column=c)
-                top = medium if r == 5 else None
-                if r == 6:
-                    bottom = medium
-                elif c in (7, 8):
-                    bottom = None      # G5,H5は下線なし
-                else:
-                    bottom = thin
-                left = medium if c == 1 else thin
-                right = medium if c == 8 else thin
-                cell.border = Border(
-                    top=top, bottom=bottom, left=left, right=right)
-
-        # --- Data rows ---
-        center_align = Alignment(horizontal='center')
-        right_align = Alignment(horizontal='right')
-        inl_ref = '$F$3' if dac_name == 'Position' else '$H$3'
-        is_neg_display = (pole == 'NEG')
-
-        # NEG: B,C,D列はPOSパターンのコードを表示 (参照XLS準拠)
-        if is_neg_display:
-            if bits == 20:
-                display_codes = list(self.SHIP_PATTERN_POSITION_POS)
-            else:
-                display_codes = list(self.SHIP_PATTERN_LBC_POS)
-            # 表示順のINL/DNL計算 (Excel式と同等、NG色判定用)
-            disp_v = [measured_v[n_pts - 1 - j] for j in range(n_pts)]
-            disp_coeff = (disp_v[-1] - disp_v[0]) / (display_codes[-1] - display_codes[0])
-            disp_theoretical = [disp_v[0] + disp_coeff * (display_codes[j] - display_codes[0])
-                                for j in range(n_pts)]
-            v_per_lsb_disp = disp_coeff if dac_name == 'Position' else 10.0 / (2 ** (bits - 1))
-            disp_inl = [(disp_v[j] - disp_theoretical[j]) / v_per_lsb_disp for j in range(n_pts)]
-            disp_dnl = [None] * n_pts
-            for j in range(n_pts - 1):
-                if display_codes[j + 1] - display_codes[j] == 1:
-                    disp_dnl[j] = disp_inl[j + 1] - disp_inl[j]
-        else:
-            display_codes = None
-            disp_inl = ship_results['inl']
-            disp_dnl = ship_results['dnl']
-
-        offset_val = 2 ** (bits - 1)
-        for i, uval in enumerate(unsigned_vals):
-            r = first_r + i
-
-            # NEG: コード列はPOSパターン、電圧列は測定順逆
-            if display_codes is not None:
-                disp_uval = display_codes[i]
-                disp_signed = disp_uval - offset_val
-                v_idx = n_pts - 1 - i
-            else:
-                disp_uval = uval
-                disp_signed = int(ship_results['signed'][i])
-                v_idx = i
-
-            c_a = ws.cell(row=r, column=1, value=i + 1)                            # A: №
-            c_a.font = data_font
-            c_a.alignment = center_align
-            c_b = ws.cell(row=r, column=2, value=disp_signed)                      # B: 設定DAC値
-            c_b.font = data_font
-            c_b.alignment = center_align
-            c_c = ws.cell(row=r, column=3, value=disp_uval)                        # C: unsigned
-            c_c.font = data_font
-            c_c.alignment = center_align
-            c_d = ws.cell(row=r, column=4, value=f"{disp_uval & mask:0{hex_width}X}")  # D: HEX
-            c_d.font = data_font
-            c_d.alignment = center_align
-
-            c_e = ws.cell(row=r, column=5, value=measured_v[v_idx])                # E: 測定電圧
-            c_e.number_format = fmt_v
-            c_e.font = data_font
-            c_e.alignment = right_align
-
-            c_f = ws.cell(row=r, column=6)                                         # F: 理論電圧 (式)
-            c_f.value = f'=$F$3*C{r}+$E${first_r}'
-            c_f.number_format = fmt_v
-            c_f.font = data_font
-            c_f.alignment = right_align
-
-            c_g = ws.cell(row=r, column=7)                                         # G: INL (式)
-            c_g.value = f'=(E{r}-F{r})/{inl_ref}'
-            c_g.number_format = fmt_err
-            c_g.font = ng_font if abs(disp_inl[i]) > criteria['inl'] else data_font
-
-            # H: DNL (式 - 表示コードステップ=1の場合のみ)
-            if disp_dnl[i] is not None:
-                c_h = ws.cell(row=r, column=8)
-                c_h.value = f'=G{r + 1}-G{r}'
-                c_h.number_format = fmt_err
-                c_h.font = ng_font if abs(disp_dnl[i]) > criteria['dnl'] else data_font
-
-            # データ行枠線
-            for c in range(1, 9):
-                cell = ws.cell(row=r, column=c)
-                is_last = (i == n_pts - 1)
-                cell.border = Border(
-                    top=thin,
-                    bottom=medium if is_last else thin,
-                    left=medium if c == 1 else thin,
-                    right=medium if c == 8 else thin)
-
-        # --- Summary rows ---
-        sum_start = last_r + 1
-        g_range = f'G{first_r}:G{last_r}'
-        h_range = f'H{first_r}:H{last_r}'
-
-        summary_data = [
-            ('+最大誤差', f'=MAX({g_range})', f'=MAX({h_range})'),
-            ('-最大誤差', f'=MIN({g_range})', f'=MIN({h_range})'),
-            ('判定基準',   criteria['inl'],      criteria['dnl']),
-        ]
-        for offset, (label, inl_v, dnl_v) in enumerate(summary_data):
-            r = sum_start + offset
-            c_f = ws.cell(row=r, column=6, value=label)
-            c_f.font = data_font
-            c_f.alignment = center_align
-            c_g = ws.cell(row=r, column=7, value=inl_v)
-            c_g.number_format = fmt_err
-            c_g.font = data_font
-            c_h = ws.cell(row=r, column=8, value=dnl_v)
-            c_h.number_format = fmt_err
-            c_h.font = data_font
-            # 規格行はG,H右寄せ (参照XLSに合わせる)
-            if offset == 2:
-                c_g.alignment = right_align
-                c_h.alignment = right_align
-            # 枠線
-            for c in range(6, 9):
-                cell = ws.cell(row=r, column=c)
-                cell.border = Border(
-                    top=medium if offset == 0 else thin,
-                    bottom=thin,
-                    left=medium if c == 6 else thin,
-                    right=medium if c == 8 else thin)
-
-        # 合否判定行 (Excel数式 - 参照XLS準拠)
-        r_judge = sum_start + 3
-        r_plus = sum_start      # +最大誤差行
-        r_minus = sum_start + 1  # -最大誤差行
-        r_crit = sum_start + 2   # 判定基準行
-
-        # NG色判定用 (フォント色を事前決定)
-        inl_arr = np.array(disp_inl)
-        dnl_vals = [d for d in disp_dnl if d is not None]
-        dnl_arr = np.array(dnl_vals) if dnl_vals else np.array([0.0])
-        inl_ok = float(np.max(np.abs(inl_arr))) <= criteria['inl']
-        dnl_ok = float(np.max(np.abs(dnl_arr))) <= criteria['dnl'] if len(dnl_vals) > 0 else True
-
-        judge_label_font = Font(size=11)
-        judge_value_font = Font(size=26, color='FF0000') if not (inl_ok and dnl_ok) else Font(size=26)
-        c_f_judge = ws.cell(row=r_judge, column=6, value='判定結果')
-        c_f_judge.font = judge_label_font
-        c_f_judge.alignment = Alignment(horizontal='center', vertical='center')
-        ws.row_dimensions[r_judge].height = 33.6
-        ws.merge_cells(f'G{r_judge}:H{r_judge}')
-        judge_formula = (f'=IF((ABS(G{r_plus})<G{r_crit})'
-                         f'+(ABS(H{r_plus})<H{r_crit})'
-                         f'+(ABS(G{r_minus})<G{r_crit})'
-                         f'+(ABS(H{r_minus})<H{r_crit})=4,"OK","NG")')
-        c_judge = ws.cell(row=r_judge, column=7, value=judge_formula)
-        c_judge.font = judge_value_font
-        c_judge.alignment = center_align
-        for c in range(6, 9):
-            ws.cell(row=r_judge, column=c).border = Border(
-                top=thin, bottom=medium,
-                left=medium if c == 6 else thin,
-                right=medium if c == 8 else thin)
-
-        # --- グラフ作成 (参照XLS準拠) ---
-        # 主チャート (INL: 左Y軸)
-        chart = LineChart()
-        chart.title = f"{def_info['name']} {pole} {dac_name} 直線性({n_pts}点シーケンシャル測定)"
-        chart.width = 19.5
-        chart.height = 17.5
-
-        # 左Y軸: INL(LSB)
-        chart.y_axis.title = "INL(LSB)"
-        chart.y_axis.scaling.min = -1.5
-        chart.y_axis.scaling.max = 1.5
-        chart.y_axis.majorUnit = 0.25
-        chart.y_axis.majorGridlines = ChartLines()
-        chart.y_axis.minorGridlines = None
-        chart.y_axis.numFmt = '0.00_ '
-        chart.y_axis.crossBetween = "midCat"
-
-        # X軸: ラベルを上部に配置、2つおきに表示
-        chart.x_axis.title = None
-        chart.x_axis.majorGridlines = None
-        chart.x_axis.tickLblPos = 'high'
-        chart.x_axis.tickLblSkip = 2
-
-        # INL系列: マゼンタ線 + マゼンタ四角マーカー
-        inl_values = Reference(ws, min_col=7, min_row=first_r, max_row=last_r)
-        inl_series = Series(inl_values, title="INL")
-        inl_series.graphicalProperties.line.solidFill = "FF00FF"
-        inl_series.marker.symbol = "square"
-        inl_series.marker.size = 5
-        inl_series.marker.graphicalProperties.solidFill = "FF00FF"
-        chart.append(inl_series)
-
-        # 副チャート (DNL: 右Y軸)
-        chart2 = LineChart()
-        chart2.y_axis.title = "DNL(LSB)"
-        chart2.y_axis.scaling.min = -1.5
-        chart2.y_axis.scaling.max = 1.5
-        chart2.y_axis.majorUnit = 0.25
-        chart2.y_axis.numFmt = '0.00_ '
-        chart2.y_axis.axId = 200
-
-        # DNL系列: 線なし(マーカーのみ) + ネイビーダイヤモンドマーカー
-        dnl_values = Reference(ws, min_col=8, min_row=first_r, max_row=last_r)
-        dnl_series = Series(dnl_values, title="DNL")
-        dnl_series.graphicalProperties.line.noFill = True
-        dnl_series.marker.symbol = "diamond"
-        dnl_series.marker.size = 5
-        dnl_series.marker.graphicalProperties.solidFill = "000080"
-        chart2.append(dnl_series)
-
-        # チャート結合 (DNLを第2軸に)
-        chart += chart2
-
-        # 凡例: 下部
-        chart.legend.position = 'b'
-
-        ws.add_chart(chart, "J1")
-
-        # --- ファイル保存 ---
+        # ファイル保存
         save_dir = self.save_dir.get()
         os.makedirs(save_dir, exist_ok=True)
         timestamp = time.strftime('%Y%m%d_%H%M%S')
-        filename = f"{serial_no}_{dac_name}_{pole}_linearity_出荷シーケンス_{timestamp}.xlsx"
+        filename = (f"{serial_no}_{dac_name}_{pole}_linearity_"
+                    f"出荷シーケンス_{timestamp}.xlsx")
         filepath = os.path.join(save_dir, filename)
 
         try:
             wb.save(filepath)
-            return filepath, inl_ok and dnl_ok
+            return filepath, True
         except Exception as e:
             self._queue_update('log', (f"XLSX保存エラー: {e}", "ERROR"))
             return None, False
+
+    @staticmethod
+    def _update_chart_refs(ws, old_name, new_name):
+        """チャート内のシート参照を更新"""
+        old_unquoted = f"{old_name}!"
+        old_quoted = f"'{old_name}'!"
+        new_ref = f"'{new_name}'!"
+
+        for chart in ws._charts:
+            for child in chart._charts:
+                for series in child.series:
+                    if (hasattr(series.val, 'numRef') and series.val.numRef
+                            and series.val.numRef.f):
+                        f = series.val.numRef.f
+                        f = f.replace(old_quoted, new_ref)
+                        f = f.replace(old_unquoted, new_ref)
+                        series.val.numRef.f = f
+                    if (hasattr(series, 'title')
+                            and hasattr(series.title, 'strRef')
+                            and series.title.strRef
+                            and series.title.strRef.f):
+                        f = series.title.strRef.f
+                        f = f.replace(old_quoted, new_ref)
+                        f = f.replace(old_unquoted, new_ref)
+                        series.title.strRef.f = f
+
+    def _get_template_path(self, dac_name):
+        """テンプレートXLSXのパスを取得 (PyInstaller対応)"""
+        filename = f'linearity_{dac_name.lower()}.xlsx'
+
+        candidates = [
+            os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                         '..', 'template', filename),
+        ]
+
+        if getattr(sys, 'frozen', False):
+            base_path = sys._MEIPASS
+            candidates.insert(0, os.path.join(base_path, 'template', filename))
+            exe_dir = os.path.dirname(sys.executable)
+            candidates.insert(0, os.path.join(exe_dir, 'template', filename))
+
+        for path in candidates:
+            if os.path.exists(path):
+                return path
+
+        return None
 
     # ==================== グラフ表示 ====================
     def _show_graph(self, data):
@@ -1317,67 +1100,49 @@ class LinearityTab(ttk.Frame):
         plt.show(block=False)
 
     def _save_graph_ship_png(self, data):
-        """出荷試験用 INL/DNL折れ線グラフをPNGで保存（参考ファイル準拠）"""
-        n_pts = len(data['x_vals'])
-        x_count = np.arange(1, n_pts + 1)  # 横軸: 回数 (1, 2, 3, ...)
-        ship_results = data['ship_results']
-        inl = np.array(ship_results['inl'])
-        dac_name = data['dac_name']
-        pole = data['pole']
-        serial_no = data['serial_no']
-        criteria = self.SHIP_CRITERIA[dac_name]
+        """XLSX内のグラフと表をExcel COM経由でPNGエクスポート"""
+        xlsx_path = data.get('xlsx_path')
+        if not xlsx_path or not os.path.exists(xlsx_path):
+            return None
 
-        # 日本語フォント設定
-        matplotlib.rcParams['font.family'] = 'MS Gothic'
+        base = os.path.splitext(xlsx_path)[0]
+        chart_png = base + '_chart.png'
+        table_png = base + '_table.png'
 
-        fig, ax = plt.subplots(figsize=(10, 5))
-        fig.patch.set_facecolor('white')
-        ax.set_facecolor('white')
+        try:
+            import win32com.client
+            from PIL import ImageGrab
 
-        # INL 折れ線 (青、丸マーカー)
-        ax.plot(x_count, inl, color='#4472C4', linewidth=1, marker='o',
-                markersize=3, label='INL', zorder=3)
+            excel = win32com.client.Dispatch("Excel.Application")
+            excel.Visible = False
+            excel.DisplayAlerts = False
+            wb = excel.Workbooks.Open(os.path.abspath(xlsx_path))
+            ws = wb.Sheets(1)
 
-        # DNL 折れ線 (緑、三角マーカー)
-        dnl_x, dnl_y = [], []
-        for i, d in enumerate(ship_results['dnl']):
-            if d is not None:
-                dnl_x.append(i + 1)
-                dnl_y.append(d)
-        if dnl_x:
-            ax.plot(dnl_x, dnl_y, color='#70AD47', linewidth=1, marker='^',
-                    markersize=3, label='DNL', zorder=3)
-            ax.axhline(y=criteria['dnl'], color='#70AD47', linestyle='--',
-                       linewidth=0.8, alpha=0.7)
-            ax.axhline(y=-criteria['dnl'], color='#70AD47', linestyle='--',
-                       linewidth=0.8, alpha=0.7)
+            # グラフPNG
+            ws.ChartObjects(1).Chart.Export(os.path.abspath(chart_png))
 
-        # INL規格ライン (赤破線)
-        ax.axhline(y=criteria['inl'], color='red', linestyle='--', linewidth=0.8,
-                   label=f'INL \u00b1{criteria["inl"]} LSB')
-        ax.axhline(y=-criteria['inl'], color='red', linestyle='--', linewidth=0.8)
-        ax.axhline(y=0, color='black', linestyle='-', linewidth=0.5)
+            # 表PNG (Row3～判定結果行)
+            n_pts = len(data['x_vals'])
+            judge_row = 7 + n_pts - 1 + 4
+            rng = ws.Range(f"A5:H{judge_row}")
+            rng.CopyPicture(Appearance=1, Format=2)  # xlScreen, xlBitmap
+            img = ImageGrab.grabclipboard()
+            if img:
+                img.save(os.path.abspath(table_png))
 
-        # 軸・タイトル
-        ax.set_title(f'{serial_no}  {dac_name}  {pole}', fontsize=11, fontweight='bold')
-        ax.set_xlabel('回数', fontsize=10)
-        ax.set_ylabel('誤差 (LSB)', fontsize=10)
-        ax.legend(loc='upper right', fontsize=8, framealpha=0.9)
-        ax.grid(True, linestyle='-', linewidth=0.3, alpha=0.5)
-        ax.set_xlim(0.5, n_pts + 0.5)
+            wb.Close(False)
+            excel.Quit()
 
-        plt.tight_layout()
+            if os.path.exists(table_png):
+                self._queue_update('log', (
+                    f"  表PNG保存: {table_png}", "SUCCESS"))
 
-        # PNG保存
-        save_dir = self.save_dir.get()
-        os.makedirs(save_dir, exist_ok=True)
-        timestamp = time.strftime('%Y%m%d_%H%M%S')
-        png_filename = f"{serial_no}_{dac_name}_{pole}_linearity_出荷シーケンス_{timestamp}.png"
-        png_path = os.path.join(save_dir, png_filename)
-        fig.savefig(png_path, dpi=150, bbox_inches='tight')
-        plt.close(fig)
-
-        return png_path
+            return chart_png
+        except Exception as e:
+            self._queue_update('log', (
+                f"  PNGエクスポートエラー: {e}", "WARNING"))
+            return None
 
     # ==================== 更新キュー・ポーリング ====================
     def _queue_update(self, msg_type, data):

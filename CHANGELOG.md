@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.37] - 2026-03-04
+### 変更
+- 出荷シーケンスExcel出力をテンプレートXLSX方式に変更
+  - template/linearity_position.xlsx (48点) / linearity_lbc.xlsx (54点) を使用
+  - グラフ書式を手動修正済みXLSXからそのまま保持
+  - E列（測定電圧）のみ書き込み、他は全てテンプレート内で定義
+  - 条件付き書式でINL/DNL NG値の赤色表示（Pythonコード不要）
+- PNG保存をExcel COM経由に変更（グラフ＋表の2ファイル出力）
+- グラフタイトルをDEF番号からシリアル番号に修正
+### 追加
+- 計測ログに各設定データの測定値を出力（[1/48] 00000 → -9.996740 V）
+- タイトルバーにバージョン番号を表示
+
 ## [1.36] - 2026-03-04
 ### 変更
 - 出荷シーケンスのPOS/NEGパターンを個別定義に変更
