@@ -9,9 +9,8 @@ import sys
 import json
 import random
 import numpy as np
-import matplotlib
-import matplotlib.pyplot as plt
 import openpyxl
+from openpyxl.styles import Font
 
 
 class LinearityTab(ttk.Frame):
@@ -422,8 +421,8 @@ class LinearityTab(ttk.Frame):
                 return [0]
             step = max_val / (n - 1)
             return [min(int(round(i * step)), max_val) for i in range(n)]
-        else:  # Random
-            return sorted(random.sample(range(max_val + 1), min(n, max_val + 1)))
+        else:  # Random (VBAマクロ準拠: 未ソート、重複許可)
+            return [random.randint(0, max_val) for _ in range(n)]
 
     # ==================== 計測制御 ====================
     def start_measurement(self):
@@ -545,7 +544,8 @@ class LinearityTab(ttk.Frame):
 
                     serial_no = self._get_serial_number(def_info['index'])
                     ship_pole_results = {}
-                    ship_timestamp = time.strftime('%Y%m%d_%H%M%S')
+                    linear_pole_results = {}
+                    common_timestamp = time.strftime('%Y%m%d_%H%M%S')
 
                     for pole in ['POS', 'NEG']:
                         if self._stop_event.is_set():
@@ -671,7 +671,7 @@ class LinearityTab(ttk.Frame):
                             save_dir = self.save_dir.get()
                             os.makedirs(save_dir, exist_ok=True)
                             base_name = (f"{serial_no}_{dac_name}_linearity_"
-                                         f"出荷シーケンス_{ship_timestamp}")
+                                         f"出荷シーケンス_{common_timestamp}")
                             if pole == 'POS':
                                 xlsx_filepath = os.path.join(
                                     save_dir, base_name + '.xlsx')
@@ -706,68 +706,70 @@ class LinearityTab(ttk.Frame):
                             self._queue_update('ship_pole_done', pole_data)
 
                         else:
-                            # --- 通常モード: Gain/Offset/Error ---
-                            results = self._calculate_linearity(
-                                np.array(x_vals, dtype=float),
-                                np.array(y_vals, dtype=float),
-                                bits, span, (pole == 'NEG')
-                            )
+                            # --- 通常モード: XLSX保存 + Gain/Offset/Error ---
+                            save_dir = self.save_dir.get()
+                            os.makedirs(save_dir, exist_ok=True)
+                            mode = self.pattern_mode.get().lower()
+                            base_name = (f"{serial_no}_{dac_name}_linearity_"
+                                         f"{mode}_{common_timestamp}")
+                            if pole == 'POS':
+                                xlsx_filepath = os.path.join(
+                                    save_dir, base_name + '.xlsx')
+                            else:
+                                xlsx_filepath = os.path.join(
+                                    save_dir, base_name + '_tmp.xlsx')
 
-                            ng_flags = []
-                            if abs(results['gain'] - 1.0) > self.th_gain.get():
-                                ng_flags.append('Gain')
-                            if abs(results['offset']) > self.th_offset.get():
-                                ng_flags.append('Offset')
-                            if results['max_error'] > self.th_error.get():
-                                ng_flags.append('Error')
-                            results['ng'] = bool(ng_flags)
-                            results['ng_detail'] = ng_flags
-                            results['judge'] = 'NG' if ng_flags else 'OK'
+                            xlsx_path, results = self._save_xlsx_linear(
+                                x_vals, y_vals, dac_name, pole,
+                                def_info, serial_no, bits, span,
+                                filepath=xlsx_filepath)
 
-                            detail_str = f" ({', '.join(ng_flags)})" if ng_flags else ""
-                            self._queue_update('log', (
-                                f"  Gain={results['gain']:.6f}, "
-                                f"Offset={results['offset']:.3f} LSB, "
-                                f"MaxErr={results['max_error']:.3f} LSB "
-                                f"\u2192 {results['judge']}{detail_str}",
-                                "ERROR" if ng_flags else "SUCCESS"
-                            ))
-
-                            # CSV保存
-                            csv_path = self._save_csv(
-                                results, x_vals, y_vals,
-                                dac_name, pole, def_info, serial_no, bits, span)
-                            if csv_path:
+                            if results:
+                                ng_flags = results.get('ng_detail', [])
+                                detail_str = (f" ({', '.join(ng_flags)})"
+                                              if ng_flags else "")
                                 self._queue_update('log', (
-                                    f"  CSV保存: {csv_path}", "SUCCESS"))
+                                    f"  Gain={results['gain']:.6f}, "
+                                    f"Offset={results['offset']:.3f} LSB, "
+                                    f"MaxErr={results['max_error']:.3f} LSB "
+                                    f"\u2192 {results['judge']}{detail_str}",
+                                    "ERROR" if ng_flags else "SUCCESS"
+                                ))
 
-                            # グラフ・サマリー更新をキュー
-                            self._queue_update('result', {
+                            if xlsx_path:
+                                self._queue_update('log', (
+                                    f"  XLSX保存: {xlsx_path}", "SUCCESS"))
+
+                            pole_data = {
                                 'def_name': def_info['name'],
                                 'dac_name': dac_name,
                                 'pole': pole,
-                                'results': results,
-                                'x_vals': x_vals,
-                                'y_vals': y_vals,
-                                'bits': bits,
-                                'span': span,
-                            })
+                                'results': results or {},
+                                'serial_no': serial_no,
+                                'xlsx_path': xlsx_path,
+                            }
+                            linear_pole_results[pole] = pole_data
 
-                    # 出荷シーケンス: POS/NEGを1ファイルに統合
-                    if is_ship:
-                        if len(ship_pole_results) == 2:
-                            self._queue_update('merge_ship_xlsx', ship_pole_results)
-                        elif len(ship_pole_results) == 1:
-                            # 片方のみ: NEG一時ファイルならリネーム
-                            only_data = list(ship_pole_results.values())[0]
-                            xp = only_data.get('xlsx_path', '')
-                            if '_tmp.xlsx' in xp:
-                                final = xp.replace('_tmp.xlsx', '.xlsx')
-                                try:
-                                    os.rename(xp, final)
-                                    only_data['xlsx_path'] = final
-                                except Exception:
-                                    pass
+                            # サマリー + PNG表示
+                            self._queue_update('linear_pole_done', pole_data)
+
+                    # POS/NEGを1ファイルに統合
+                    pole_results = ship_pole_results if is_ship \
+                        else linear_pole_results
+                    merge_msg = 'merge_ship_xlsx' if is_ship \
+                        else 'merge_linear_xlsx'
+                    if len(pole_results) == 2:
+                        self._queue_update(merge_msg, pole_results)
+                    elif len(pole_results) == 1:
+                        only_data = list(pole_results.values())[0]
+                        xp = only_data.get('xlsx_path', '')
+                        if '_tmp.xlsx' in xp:
+                            final = xp.replace('_tmp.xlsx', '.xlsx')
+                            try:
+                                os.rename(xp, final)
+                                only_data['xlsx_path'] = final
+                            except Exception:
+                                pass
 
             # 終了処理
             self._scanner_cpon()
@@ -999,6 +1001,189 @@ class LinearityTab(ttk.Frame):
             self._queue_update('log', (f"CSV保存エラー: {e}", "ERROR"))
             return None
 
+    def _save_xlsx_linear(self, x_vals, y_vals, dac_name, pole,
+                          def_info, serial_no, bits, span,
+                          filepath=None):
+        """Random/Linear/File計測結果をテンプレートXLSXに保存 (DacTestBench5K準拠)
+
+        テンプレート (linearity_linear.xlsx) をコピーし、データ部分を書き換え。
+        グラフシートはテンプレートの書式をそのまま保持。
+        シート名を "{serial}{P/N}" に変更し、チャート参照も更新。
+        """
+        import shutil
+        import re
+        import zipfile
+
+        template_path = self._get_template_path('linear')
+        if not template_path:
+            self._queue_update('log', (
+                "テンプレートが見つかりません: linearity_linear.xlsx", "ERROR"))
+            return None, None
+
+        offset_val = 2 ** (bits - 1)
+        max_val = (1 << bits) - 1
+        vgain = span / max_val  # V/LSB
+        if pole == 'NEG':
+            vgain = -vgain  # NEG: 入力コードに対して電圧反転
+
+        # Signed DAC values
+        n = len(x_vals)
+        signed_vals = [int(x - offset_val) for x in x_vals]
+
+        # 最小二乗法 (signed値ベース): y = m*x + b
+        x_arr = np.array(signed_vals, dtype=float)
+        y_arr = np.array(y_vals, dtype=float)
+        sx = float(np.sum(x_arr))
+        sy = float(np.sum(y_arr))
+        sxx = float(np.sum(x_arr * x_arr))
+        sxy = float(np.sum(x_arr * y_arr))
+        denom = n * sxx - sx * sx
+        m = (n * sxy - sx * sy) / denom
+        b = (sy * sxx - sx * sxy) / denom
+
+        # GAIN (LSB/LSB), OFFSET (LSB) — VBA準拠
+        gain_lsb = m / vgain
+        offset_lsb = b / vgain
+
+        # Sort by signed DAC value (ascending), preserving original order
+        order = list(range(1, n + 1))
+        data_sorted = sorted(
+            zip(order, signed_vals, y_vals), key=lambda r: r[1])
+
+        # テンプレートコピー → 保存先
+        if filepath is None:
+            save_dir = self.save_dir.get()
+            os.makedirs(save_dir, exist_ok=True)
+            timestamp = time.strftime('%Y%m%d_%H%M%S')
+            mode = self.pattern_mode.get().lower()
+            filename = (f"{serial_no}_{dac_name}_linearity_"
+                        f"{mode}_{timestamp}.xlsx")
+            filepath = os.path.join(save_dir, filename)
+        shutil.copy2(template_path, filepath)
+
+        # データシート書き換え
+        mode = self.pattern_mode.get().lower()
+        sheet_name = f"{serial_no}{pole[0]}"[:31]
+        wb = openpyxl.load_workbook(filepath)
+        ws = wb['計算データ']
+        old_sheet_name = ws.title
+        ws.title = sheet_name
+
+        # チャートシートのタブ名も変更
+        chart_tab_name = f"{serial_no}{pole[0]}_chart"[:31]
+        for cs in wb.chartsheets:
+            cs.title = chart_tab_name
+
+        # 旧データクリア (Row 7+)
+        for r in range(7, ws.max_row + 1):
+            for c in range(1, 9):
+                ws.cell(row=r, column=c).value = None
+
+        # ヘッダー
+        title = f"{serial_no} {pole} {dac_name} ({n}点{mode})"
+        ws['A1'] = title
+        ws['B2'] = mode
+        ws['B3'] = gain_lsb
+        ws['B4'] = offset_lsb
+        ws['C3'] = None
+        ws['C4'] = None
+
+        # GAIN NG判定
+        red_font = Font(color="FF0000")
+        if abs(gain_lsb - 1.0) > self.th_gain.get():
+            ws['C3'] = "NG"
+            for cell in ['A3', 'B3', 'C3']:
+                ws[cell].font = red_font
+
+        # OFFSET NG判定
+        if abs(offset_lsb) > self.th_offset.get():
+            ws['C4'] = "NG"
+            for cell in ['A4', 'B4', 'C4']:
+                ws[cell].font = red_font
+
+        # データ行 (Row 7+)
+        err_threshold = self.th_error.get()
+        max_err = 0.0
+        for i, (orig_order, s_val, m_val) in enumerate(data_sorted):
+            r = 7 + i
+            theo_v = s_val * vgain
+            meas_dac = m_val / vgain
+            fit_val = (m * s_val + b) / vgain
+            err_lsb = m_val / vgain - fit_val
+            max_err = max(max_err, abs(err_lsb))
+
+            ws.cell(row=r, column=1, value=orig_order)
+            ws.cell(row=r, column=2, value=s_val)
+            ws.cell(row=r, column=3, value=theo_v)
+            ws.cell(row=r, column=4, value=m_val)
+            ws.cell(row=r, column=5, value=meas_dac)
+            ws.cell(row=r, column=6, value=fit_val)
+            ws.cell(row=r, column=7, value=err_lsb)
+
+            if abs(err_lsb) > err_threshold:
+                ws.cell(row=r, column=8, value="NG")
+                for c in range(1, 9):
+                    ws.cell(row=r, column=c).font = red_font
+
+        # NG判定 (サマリー用)
+        ng_flags = []
+        if abs(gain_lsb - 1.0) > self.th_gain.get():
+            ng_flags.append('Gain')
+        if abs(offset_lsb) > self.th_offset.get():
+            ng_flags.append('Offset')
+        if max_err > err_threshold:
+            ng_flags.append('Error')
+        calc_results = {
+            'gain': gain_lsb,
+            'offset': offset_lsb,
+            'max_error': max_err,
+            'ng': bool(ng_flags),
+            'judge': 'NG' if ng_flags else 'OK',
+            'ng_detail': ng_flags,
+        }
+
+        try:
+            wb.save(filepath)
+        except Exception as e:
+            self._queue_update('log', (f"XLSX保存エラー: {e}", "ERROR"))
+            return None, calc_results
+
+        # チャートXML更新: シート名参照 + データ範囲 + タイトル + キャッシュ削除
+        last_row = 6 + n
+        try:
+            tmp = filepath + '.tmp'
+            with zipfile.ZipFile(filepath, 'r') as zin:
+                with zipfile.ZipFile(tmp, 'w') as zout:
+                    for item in zin.infolist():
+                        raw = zin.read(item.filename)
+                        if item.filename == 'xl/charts/chart1.xml':
+                            content = raw.decode('utf-8')
+                            # シート名参照を更新
+                            content = content.replace(
+                                old_sheet_name, sheet_name)
+                            # セル参照の行範囲を更新
+                            content = re.sub(
+                                r'([$][A-G][$]7:[$][A-G][$])\d+',
+                                rf'\g<1>{last_row}',
+                                content)
+                            # チャートタイトルを更新
+                            content = re.sub(
+                                r'(<a:t>)[^<]*(</a:t>)',
+                                rf'\g<1>{title}\g<2>',
+                                content, count=1)
+                            # numCacheを削除 (Excel再計算)
+                            content = re.sub(
+                                r'<numCache>.*?</numCache>',
+                                '', content, flags=re.DOTALL)
+                            raw = content.encode('utf-8')
+                        zout.writestr(item, raw)
+            shutil.move(tmp, filepath)
+        except Exception as e:
+            self._queue_update('log', (
+                f"  チャート範囲更新エラー: {e}", "WARNING"))
+
+        return filepath, calc_results
+
     def _save_xlsx_ship(self, ship_results, unsigned_vals, measured_v,
                         dac_name, pole, def_info, serial_no, bits,
                         filepath=None):
@@ -1099,45 +1284,20 @@ class LinearityTab(ttk.Frame):
         return None
 
     # ==================== グラフ表示 ====================
-    def _show_graph(self, data):
-        """誤差散布図を別ウィンドウで表示"""
-        x_vals = np.array(data['x_vals'])
-        errors = np.array(data['results']['errors'])
-        dac_name = data['dac_name']
-        pole = data['pole']
-        def_name = data['def_name']
-        results = data['results']
-        th_err = self.th_error.get()
-
-        fig, ax = plt.subplots(figsize=(9, 5))
-
-        # NG時は背景色を変更
-        if results['ng']:
-            fig.patch.set_facecolor('#fff5f5')
-
-        # 誤差散布図
-        ax.scatter(x_vals, errors, s=4, c='blue', alpha=0.7, label='Error')
-
-        # NG閾値ライン（赤破線）
-        ax.axhline(y=th_err, color='red', linestyle='--', linewidth=1,
-                   label=f'\u00b1{th_err} LSB')
-        ax.axhline(y=-th_err, color='red', linestyle='--', linewidth=1)
-        ax.axhline(y=0, color='gray', linestyle='-', linewidth=0.5)
-
-        # Gain/Offset情報テキスト
-        info = (f"Gain: {results['gain']:.6f}  "
-                f"Offset: {results['offset']:.3f} LSB  "
-                f"MaxErr: {results['max_error']:.3f} LSB  "
-                f"[{results['judge']}]")
-        ax.set_title(f"Linearity: {def_name} {dac_name} {pole}\n{info}",
-                     fontsize=10)
-        ax.set_xlabel("DAC Set Value")
-        ax.set_ylabel("Error [LSB]")
-        ax.legend(loc='upper right', fontsize=8)
-        ax.grid(True, alpha=0.3)
-
-        plt.tight_layout()
-        plt.show(block=False)
+    def _export_png_async(self, export_func, data):
+        """PNGエクスポートをバックグラウンドスレッドで実行"""
+        def _worker():
+            import pythoncom
+            pythoncom.CoInitialize()
+            try:
+                png_path = export_func(data)
+                if png_path:
+                    self.after(0, lambda: self.log(
+                        f"  PNG保存: {png_path}", "SUCCESS"))
+                    self.after(0, lambda: self._show_png(png_path))
+            finally:
+                pythoncom.CoUninitialize()
+        threading.Thread(target=_worker, daemon=True).start()
 
     def _show_png(self, png_path):
         """PNGファイルをウィンドウで表示"""
@@ -1208,6 +1368,113 @@ class LinearityTab(ttk.Frame):
                 f"  PNGエクスポートエラー: {e}", "WARNING"))
             return None
 
+    def _save_graph_linear_png(self, data):
+        """Linear/Random/File XLSX内のチャートシートをExcel COM経由でPNGエクスポート"""
+        xlsx_path = data.get('xlsx_path')
+        if not xlsx_path or not os.path.exists(xlsx_path):
+            return None
+
+        pole = data.get('pole', '')
+        base = os.path.splitext(xlsx_path)[0]
+        if base.endswith('_tmp'):
+            base = base[:-4]
+        chart_png = f"{base}_{pole}_chart.png"
+        png_abs = os.path.normpath(os.path.abspath(chart_png))
+
+        # 前回の0バイトファイルが残っている可能性
+        if os.path.exists(png_abs):
+            os.remove(png_abs)
+
+        try:
+            import win32com.client
+            from PIL import ImageGrab
+
+            excel = win32com.client.DispatchEx("Excel.Application")
+            excel.DisplayAlerts = False
+            try:
+                xlsx_abs = os.path.normpath(os.path.abspath(xlsx_path))
+                wb = excel.Workbooks.Open(xlsx_abs)
+                chart = wb.Charts(1)
+
+                # NG時はチャート背景を薄い黄色に
+                if data.get('results', {}).get('ng', False):
+                    chart.PlotArea.Interior.Color = 13434879  # RGB(255,255,204)
+                    wb.Save()
+
+                # チャートシートはレンダリングが必要なため一時的に表示
+                excel.Visible = True
+                chart.Activate()
+                time.sleep(0.5)
+
+                # 方法1: Export
+                chart.Export(png_abs, "PNG")
+
+                # 0バイトなら方法2: CopyPicture + クリップボード
+                if (not os.path.exists(png_abs)
+                        or os.path.getsize(png_abs) == 0):
+                    if os.path.exists(png_abs):
+                        os.remove(png_abs)
+                    chart.CopyPicture(Appearance=1, Format=2)
+                    time.sleep(0.5)
+                    img = ImageGrab.grabclipboard()
+                    if img:
+                        img.save(png_abs)
+
+                wb.Close(False)
+            finally:
+                excel.Visible = False
+                excel.Quit()
+
+            if os.path.exists(png_abs) and os.path.getsize(png_abs) > 0:
+                return chart_png
+            self.log("  PNG: Export/CopyPicture両方失敗", "WARNING")
+            return None
+        except Exception as e:
+            self.log(f"  PNGエクスポートエラー: {e}", "WARNING")
+            return None
+
+    def _merge_linear_xlsx(self, pole_results):
+        """Linear/Random/File: POS/NEGのXLSXを1ファイルに統合
+        チャートシート + データシートをまとめてコピー"""
+        pos_xlsx = pole_results.get('POS', {}).get('xlsx_path')
+        neg_xlsx = pole_results.get('NEG', {}).get('xlsx_path')
+
+        if not pos_xlsx or not neg_xlsx:
+            return
+
+        try:
+            import win32com.client
+
+            excel = win32com.client.DispatchEx("Excel.Application")
+            excel.Visible = False
+            excel.DisplayAlerts = False
+            try:
+                wb_pos = excel.Workbooks.Open(os.path.abspath(pos_xlsx))
+                wb_neg = excel.Workbooks.Open(os.path.abspath(neg_xlsx))
+
+                # NEGの全シート（データシート + チャートシート）をPOSファイルにコピー
+                for i in range(1, wb_neg.Sheets.Count + 1):
+                    wb_neg.Sheets(i).Copy(
+                        None, wb_pos.Sheets(wb_pos.Sheets.Count))
+
+                wb_pos.Save()
+                wb_neg.Close(False)
+                wb_pos.Close(False)
+            finally:
+                excel.Quit()
+
+            # NEG一時ファイル削除
+            try:
+                if os.path.exists(neg_xlsx):
+                    os.remove(neg_xlsx)
+            except Exception:
+                pass
+
+            self.log(f"  XLSX統合完了: {pos_xlsx}", "SUCCESS")
+
+        except Exception as e:
+            self.log(f"  XLSX統合エラー: {e}", "WARNING")
+
     def _merge_ship_xlsx(self, pole_results):
         """POS/NEGのXLSXを1ファイルに統合 (PNGは各pole完了時に既にエクスポート済み)"""
         pos_xlsx = pole_results.get('POS', {}).get('xlsx_path')
@@ -1269,7 +1536,7 @@ class LinearityTab(ttk.Frame):
                     self.progress_label.config(text=f"{current} / {total}")
                     self.progressbar['maximum'] = total
                     self.progressbar['value'] = current
-                elif msg_type == 'result':
+                elif msg_type == 'linear_pole_done':
                     res = data['results']
                     tag = 'ng' if res['ng'] else 'ok'
                     self.summary_tree.insert('', 'end', values=(
@@ -1277,7 +1544,10 @@ class LinearityTab(ttk.Frame):
                         f"{res['gain']:.6f}", f"{res['offset']:.3f}",
                         f"{res['max_error']:.3f}", res['judge']
                     ), tags=(tag,))
-                    self._show_graph(data)
+                    self._export_png_async(
+                        self._save_graph_linear_png, data)
+                elif msg_type == 'merge_linear_xlsx':
+                    self._merge_linear_xlsx(data)
                 elif msg_type == 'ship_pole_done':
                     tag = 'ng' if data['judge'] == 'NG' else 'ok'
                     self.summary_tree.insert('', 'end', values=(
@@ -1285,10 +1555,8 @@ class LinearityTab(ttk.Frame):
                         f"{data['inl_worst']:.4f}", f"{data['dnl_worst']:.4f}",
                         '', data['judge']
                     ), tags=(tag,))
-                    png_path = self._save_graph_ship_png(data)
-                    if png_path:
-                        self.log(f"  PNG保存: {png_path}", "SUCCESS")
-                        self._show_png(png_path)
+                    self._export_png_async(
+                        self._save_graph_ship_png, data)
                 elif msg_type == 'merge_ship_xlsx':
                     self._merge_ship_xlsx(data)
                 elif msg_type == 'done':

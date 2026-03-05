@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.42] - 2026-03-05
+### 追加
+- Random/Linear/FileモードのXLSX出力（DacTestBench5K VBAマクロ準拠、テンプレート方式）
+- POS/NEG結果を1ファイル・複数シートに統合（Excel COM経由）
+- チャートシートからPNGエクスポート（Visible+Activate方式）
+- NG時グラフ背景を薄い黄色に変更
+- チャートシートタブ名にシリアル番号付与
+- PNG保存処理のバックグラウンドスレッド化（UI非ブロック）
+### 変更
+- Randomパターン生成をVBAマクロ準拠に変更（未ソート・重複許可）
+- NEG理論電圧計算にvgain反転を適用（入力コードに対する電圧反転を考慮）
+- サマリーTreeの値をXLSX計算結果と統一（二重計算を廃止）
+- matplotlib依存を削除（グラフ表示をExcel COM PNG方式に統一）
+- テンプレートチャートシートを横長に変更
+
 ## [1.41] - 2026-03-05
 ### 修正
 - LBC NEG測定電圧の並び順を+V先頭に修正（cii入力の補数関係による電圧反転を考慮）
