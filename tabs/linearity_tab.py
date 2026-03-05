@@ -719,10 +719,16 @@ class LinearityTab(ttk.Frame):
                                 xlsx_filepath = os.path.join(
                                     save_dir, base_name + '_tmp.xlsx')
 
-                            xlsx_path, results = self._save_xlsx_linear(
-                                x_vals, y_vals, dac_name, pole,
-                                def_info, serial_no, bits, span,
-                                filepath=xlsx_filepath)
+                            if dac_name == 'LBC':
+                                xlsx_path, results = self._save_xlsx_lbc_random(
+                                    x_vals, y_vals, pole,
+                                    def_info, serial_no, bits,
+                                    filepath=xlsx_filepath)
+                            else:
+                                xlsx_path, results = self._save_xlsx_linear(
+                                    x_vals, y_vals, dac_name, pole,
+                                    def_info, serial_no, bits, span,
+                                    filepath=xlsx_filepath)
 
                             if results:
                                 ng_flags = results.get('ng_detail', [])
@@ -1000,6 +1006,151 @@ class LinearityTab(ttk.Frame):
         except Exception as e:
             self._queue_update('log', (f"CSV保存エラー: {e}", "ERROR"))
             return None
+
+    def _save_xlsx_lbc_random(self, x_vals, y_vals, pole,
+                              def_info, serial_no, bits,
+                              filepath=None):
+        """LBC Random/Linear/File計測結果をLBCランダム用テンプレートXLSXに保存
+
+        テンプレート (linearity_lbc_random.xlsx) をコピーし、
+        A列(設定DAC値), D列(測定電圧), I列(測定順) を上書き。
+        B,C,E,F,G列の参照式は行数に合わせて拡張。
+        同一シート内の埋め込みグラフ + 別シートグラフの範囲も更新。
+        """
+        import shutil
+        import re
+        import zipfile
+
+        template_path = self._get_template_path('lbc_random')
+        if not template_path:
+            self._queue_update('log', (
+                "テンプレートが見つかりません: linearity_lbc_random.xlsx",
+                "ERROR"))
+            return None, None
+
+        offset_val = 2 ** (bits - 1)  # 32768
+        n = len(x_vals)
+
+        # Sort by signed DAC value (ascending) — 測定順を保持
+        order = list(range(1, n + 1))
+        data_sorted = sorted(
+            zip(x_vals, y_vals, order), key=lambda r: r[0])
+
+        # Copy template → 保存先
+        if filepath is None:
+            save_dir = self.save_dir.get()
+            os.makedirs(save_dir, exist_ok=True)
+            timestamp = time.strftime('%Y%m%d_%H%M%S')
+            mode = self.pattern_mode.get().lower()
+            filename = (f"{serial_no}_LBC_linearity_"
+                        f"{mode}_{timestamp}.xlsx")
+            filepath = os.path.join(save_dir, filename)
+        shutil.copy2(template_path, filepath)
+
+        wb = openpyxl.load_workbook(filepath)
+        ws = wb['計算データ']
+        old_sheet_name = ws.title
+        mode = self.pattern_mode.get().lower()
+        sheet_name = f"{serial_no}{pole[0]}"[:31]
+        ws.title = sheet_name
+
+        chart_tab_name = f"{serial_no}{pole[0]}_chart"[:31]
+        for cs in wb.chartsheets:
+            cs.title = chart_tab_name
+
+        # 旧データクリア (Row 4 以降)
+        for r in range(4, ws.max_row + 1):
+            for c in (1, 2, 3, 4, 5, 6, 7, 9):  # A-G, I
+                ws.cell(row=r, column=c).value = None
+
+        last_row = 3 + n
+        title = f"{serial_no} {pole} LBC リニアリティ({n}点{mode})"
+
+        # Row 1 パラメータ式を更新 (行範囲)
+        ws['D1'] = f'=(D4-D{last_row})/(B4-B{last_row})'
+        ws['E1'] = '=D4-D1*B4'
+        ws['F1'] = f'=AVERAGE(F4:F{last_row})'
+
+        # データ行 (Row 4+): A,D,I 上書き + B,C,E,F,G 式拡張
+        for i, (ucode, measured, orig_order) in enumerate(data_sorted):
+            r = 4 + i
+            signed = int(ucode) - offset_val
+
+            ws.cell(row=r, column=1, value=signed)             # A: 設定DAC値
+            ws.cell(row=r, column=2, value=f'=A{r}+2^15')     # B: unsigned
+            ws.cell(row=r, column=3, value=f'=DEC2HEX(B{r},4)')  # C: HEX
+            ws.cell(row=r, column=4, value=measured)           # D: 測定電圧
+            ws.cell(row=r, column=5, value=f'=D$1*B{r}+D$4')  # E: 理想電圧
+            ws.cell(row=r, column=6,
+                    value=f'=(D{r}-E{r})/C$1')                 # F: INL
+            ws.cell(row=r, column=7, value=f'=F{r}-F$1')      # G: offset補正INL
+            ws.cell(row=r, column=9, value=orig_order)         # I: 測定順
+
+        try:
+            wb.save(filepath)
+        except Exception as e:
+            self._queue_update('log', (f"XLSX保存エラー: {e}", "ERROR"))
+            return None, None
+
+        # チャートXML更新 (chart1=埋め込み, chart2=別シート)
+        try:
+            tmp = filepath + '.tmp'
+            with zipfile.ZipFile(filepath, 'r') as zin:
+                with zipfile.ZipFile(tmp, 'w') as zout:
+                    for item in zin.infolist():
+                        raw = zin.read(item.filename)
+                        if item.filename.startswith('xl/charts/chart'):
+                            content = raw.decode('utf-8')
+                            content = content.replace(
+                                old_sheet_name, sheet_name)
+                            content = re.sub(
+                                r'([$][A-I][$]4:[$][A-I][$])\d+',
+                                rf'\g<1>{last_row}', content)
+                            content = re.sub(
+                                r'(<a:t>)[^<]*(</a:t>)',
+                                rf'\g<1>{title}\g<2>',
+                                content, count=1)
+                            content = re.sub(
+                                r'<c:numCache>.*?</c:numCache>',
+                                '', content, flags=re.DOTALL)
+                            raw = content.encode('utf-8')
+                        zout.writestr(item, raw)
+            shutil.move(tmp, filepath)
+        except Exception as e:
+            self._queue_update('log', (
+                f"  チャート範囲更新エラー: {e}", "WARNING"))
+
+        # Endpoint fit で MaxINL を算出 (ログ表示用)
+        pos_1lsb = 160 / 2 ** 19
+        first_v = data_sorted[0][1]
+        if abs(first_v) <= 3:
+            pos_1lsb = 160 / (2 ** 19 * np.sqrt(2))
+        first_u = int(data_sorted[0][0]) + offset_val
+        last_u = int(data_sorted[-1][0]) + offset_val
+        ep_slope = (data_sorted[-1][1] - first_v) / (last_u - first_u)
+        inl_vals = []
+        for ucode, measured, _ in data_sorted:
+            u = int(ucode) + offset_val
+            ideal = ep_slope * u + first_v
+            inl_vals.append((measured - ideal) / pos_1lsb)
+        inl_arr = np.array(inl_vals)
+        max_inl = float(np.max(np.abs(inl_arr)))
+
+        criteria = self.SHIP_CRITERIA['LBC']
+        ng_flags = []
+        if max_inl > criteria['inl']:
+            ng_flags.append('INL')
+
+        calc_results = {
+            'gain': ep_slope / pos_1lsb,
+            'offset': 0.0,
+            'max_error': max_inl,
+            'ng': bool(ng_flags),
+            'judge': 'NG' if ng_flags else 'OK',
+            'ng_detail': ng_flags,
+        }
+
+        return filepath, calc_results
 
     def _save_xlsx_linear(self, x_vals, y_vals, dac_name, pole,
                           def_info, serial_no, bits, span,

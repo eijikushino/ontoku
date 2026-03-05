@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.43] - 2026-03-05
+### 追加
+- LBC Random/Linear/Fileモード専用XLSX出力 (`_save_xlsx_lbc_random`)
+- LBCランダム用テンプレート `linearity_lbc_random.xlsx` 新規追加
+- テンプレート参照式: endpoint fit + Position 1LSB換算 (DacTestBench5K準拠)
+- 同一シート埋め込みグラフ（オフセット補正INL）＋別シートグラフ（INL/オフセット補正INL）
+- A列(設定DAC値)・D列(測定電圧)・I列(測定順)の3列上書きで全列自動計算
+
 ## [1.42] - 2026-03-05
 ### 追加
 - Random/Linear/FileモードのXLSX出力（DacTestBench5K VBAマクロ準拠、テンプレート方式）
