@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.41] - 2026-03-05
+### 修正
+- LBC NEG測定電圧の並び順を+V先頭に修正（cii入力の補数関係による電圧反転を考慮）
+### 変更
+- LBC XLSX出力のA-D列上書きを廃止（テンプレート値をそのまま使用）
+- Position/LBCのXLSX書き込みをE列のみに統一・簡素化
+
 ## [1.40] - 2026-03-04
 ### 修正
 - Position XLSX出力でテンプレートのA-D列（設定DAC値・コード）を上書きしないよう修正

@@ -1019,38 +1019,16 @@ class LinearityTab(ttk.Frame):
         ws.title = new_name
         self._update_chart_refs(ws, old_name, new_name)
 
+        # A-D列はテンプレートのまま、E列(測定電圧)のみ書き込み
+        # POS出力: コード昇順で電圧上昇(-V→+V)
+        # NEG出力: コード昇順で電圧下降(+V→-V) ※cii入力の補数関係
+        # Position: -V先頭 → NEGのみ逆順、LBC: +V先頭 → POSのみ逆順
         n_pts = len(measured_v)
+        if (bits == 20 and pole == 'NEG') or (bits < 20 and pole == 'POS'):
+            measured_v = list(reversed(measured_v))
 
-        if bits == 20:
-            # Position: テンプレートのA-D列をそのまま使用、E列のみ書き込み
-            # NEGはci n送信のため電圧が反転 → 逆順にして-V先頭にする
-            if pole == 'NEG':
-                measured_v = list(reversed(measured_v))
-            for i in range(n_pts):
-                ws.cell(row=7 + i, column=5, value=measured_v[i])
-        else:
-            # LBC: POS側はNEG等価コード(補数)でA-D上書き、測定電圧は+V先頭
-            max_val = (1 << bits) - 1
-            offset_val = 2 ** (bits - 1)
-            if pole == 'POS':
-                unsigned_vals = list(reversed(unsigned_vals))
-                measured_v = list(reversed(measured_v))
-
-            for i in range(n_pts):
-                uval = unsigned_vals[i]
-                if pole == 'POS':
-                    code = max_val - uval  # NEG等価コード
-                else:
-                    code = uval
-                row = 7 + i
-                ws.cell(row=row, column=1, value=i + 1).number_format = '0'
-                ws.cell(row=row, column=2, value=code - offset_val).number_format = '0'
-                ws.cell(row=row, column=3, value=code).number_format = '0'
-                hex_str = f"{code & 0xFFFF:04X}"
-                hex_cell = ws.cell(row=row, column=4, value=hex_str)
-                hex_cell.number_format = '@'
-                hex_cell.quotePrefix = True
-                ws.cell(row=row, column=5, value=measured_v[i])
+        for i in range(n_pts):
+            ws.cell(row=7 + i, column=5, value=measured_v[i])
 
         # チャートタイトル変更
         chart = ws._charts[0]
