@@ -19,7 +19,7 @@ class LinearityTab(ttk.Frame):
     # DAC仕様定数
     DAC_SPECS = {
         'Position': {'bits': 20, 'span': 20.0, 'ci': 'ci', 'center': '80000', 'dmm_range': '10'},
-        'LBC':      {'bits': 16, 'span': 2.0,  'ci': 'cii', 'center': '80000', 'dmm_range': '10'},
+        'LBC':      {'bits': 16, 'span': 6.18, 'ci': 'cii', 'center': '80000', 'dmm_range': '10'},
     }
 
     # 出荷試験 (Ship) NG判定基準 (Excelマクロ DacTestBench5K 準拠)
@@ -710,8 +710,10 @@ class LinearityTab(ttk.Frame):
                             save_dir = self.save_dir.get()
                             os.makedirs(save_dir, exist_ok=True)
                             mode = self.pattern_mode.get().lower()
+                            pts_str = (f"_{len(x_vals)}pts"
+                                       if mode in ('random', 'linear') else "")
                             base_name = (f"{serial_no}_{dac_name}_linearity_"
-                                         f"{mode}_{common_timestamp}")
+                                         f"{mode}{pts_str}_{common_timestamp}")
                             if pole == 'POS':
                                 xlsx_filepath = os.path.join(
                                     save_dir, base_name + '.xlsx')
@@ -722,7 +724,7 @@ class LinearityTab(ttk.Frame):
                             if dac_name == 'LBC':
                                 xlsx_path, results = self._save_xlsx_lbc_random(
                                     x_vals, y_vals, pole,
-                                    def_info, serial_no, bits,
+                                    def_info, serial_no, bits, span,
                                     filepath=xlsx_filepath)
                             else:
                                 xlsx_path, results = self._save_xlsx_linear(
@@ -965,7 +967,9 @@ class LinearityTab(ttk.Frame):
 
         timestamp = time.strftime('%Y%m%d_%H%M%S')
         mode = '出荷シーケンス' if self.pattern_mode.get() == 'Ship' else self.pattern_mode.get()
-        filename = f"{serial_no}_{dac_name}_{pole}_linearity_{mode}_{timestamp}.csv"
+        pts_str = (f"_{len(x_vals)}pts"
+                   if self.pattern_mode.get() in ('Random', 'Linear') else "")
+        filename = f"{serial_no}_{dac_name}_{pole}_linearity_{mode}{pts_str}_{timestamp}.csv"
         filepath = os.path.join(save_dir, filename)
 
         v_per_lsb = results['v_per_lsb']
@@ -1008,7 +1012,7 @@ class LinearityTab(ttk.Frame):
             return None
 
     def _save_xlsx_lbc_random(self, x_vals, y_vals, pole,
-                              def_info, serial_no, bits,
+                              def_info, serial_no, bits, span,
                               filepath=None):
         """LBC Random/Linear/File計測結果をLBCランダム用テンプレートXLSXに保存
 
@@ -1042,8 +1046,9 @@ class LinearityTab(ttk.Frame):
             os.makedirs(save_dir, exist_ok=True)
             timestamp = time.strftime('%Y%m%d_%H%M%S')
             mode = self.pattern_mode.get().lower()
+            pts_str = f"_{n}pts" if mode in ('random', 'linear') else ""
             filename = (f"{serial_no}_LBC_linearity_"
-                        f"{mode}_{timestamp}.xlsx")
+                        f"{mode}{pts_str}_{timestamp}.xlsx")
             filepath = os.path.join(save_dir, filename)
         shutil.copy2(template_path, filepath)
 
@@ -1054,9 +1059,14 @@ class LinearityTab(ttk.Frame):
         sheet_name = f"{serial_no}{pole[0]}"[:31]
         ws.title = sheet_name
 
-        chart_tab_name = f"{serial_no}{pole[0]}_chart"[:31]
-        for cs in wb.chartsheets:
-            cs.title = chart_tab_name
+        # チャートシートを削除（埋め込みグラフのみ使用）
+        for cs in list(wb.chartsheets):
+            wb.remove(cs)
+
+        # テンプレートの書式を保存 (Row 4 = 最初のデータ行)
+        col_formats_lbc = {}
+        for c in (1, 2, 3, 4, 5, 6, 7, 9):
+            col_formats_lbc[c] = ws.cell(row=4, column=c).number_format
 
         # 旧データクリア (Row 4 以降)
         for r in range(4, ws.max_row + 1):
@@ -1085,6 +1095,9 @@ class LinearityTab(ttk.Frame):
                     value=f'=(D{r}-E{r})/C$1')                 # F: INL
             ws.cell(row=r, column=7, value=f'=F{r}-F$1')      # G: offset補正INL
             ws.cell(row=r, column=9, value=orig_order)         # I: 測定順
+            # テンプレート書式を適用
+            for c, fmt in col_formats_lbc.items():
+                ws.cell(row=r, column=c).number_format = fmt
 
         try:
             wb.save(filepath)
@@ -1092,7 +1105,7 @@ class LinearityTab(ttk.Frame):
             self._queue_update('log', (f"XLSX保存エラー: {e}", "ERROR"))
             return None, None
 
-        # チャートXML更新 (chart1=埋め込み, chart2=別シート)
+        # 埋め込みチャートXML更新 (シート名・データ範囲・タイトル)
         try:
             tmp = filepath + '.tmp'
             with zipfile.ZipFile(filepath, 'r') as zin:
@@ -1120,31 +1133,55 @@ class LinearityTab(ttk.Frame):
             self._queue_update('log', (
                 f"  チャート範囲更新エラー: {e}", "WARNING"))
 
-        # Endpoint fit で MaxINL を算出 (ログ表示用)
-        pos_1lsb = 160 / 2 ** 19
-        first_v = data_sorted[0][1]
-        if abs(first_v) <= 3:
-            pos_1lsb = 160 / (2 ** 19 * np.sqrt(2))
-        first_u = int(data_sorted[0][0]) + offset_val
-        last_u = int(data_sorted[-1][0]) + offset_val
-        ep_slope = (data_sorted[-1][1] - first_v) / (last_u - first_u)
-        inl_vals = []
-        for ucode, measured, _ in data_sorted:
-            u = int(ucode) + offset_val
-            ideal = ep_slope * u + first_v
-            inl_vals.append((measured - ideal) / pos_1lsb)
-        inl_arr = np.array(inl_vals)
-        max_inl = float(np.max(np.abs(inl_arr)))
+        # Gain/Offset: LSQ fit (Position と同じ計算方法)
+        signed_arr = np.array(
+            [int(d[0]) - offset_val for d in data_sorted], dtype=float)
+        meas_arr = np.array([d[1] for d in data_sorted], dtype=float)
+        n_pts = len(data_sorted)
+        sx = float(np.sum(signed_arr))
+        sy = float(np.sum(meas_arr))
+        sxx = float(np.sum(signed_arr * signed_arr))
+        sxy = float(np.sum(signed_arr * meas_arr))
+        denom = n_pts * sxx - sx * sx
+        m_slope = (n_pts * sxy - sx * sy) / denom
+        b_intercept = (sy * sxx - sx * sxy) / denom
 
-        criteria = self.SHIP_CRITERIA['LBC']
+        max_val = (1 << bits) - 1  # 65535
+        vgain = span / max_val     # V/LSB (6.18 / 65535)
+        if pole == 'NEG':
+            vgain = -vgain
+
+        gain_lsb = m_slope / vgain
+        offset_lsb = b_intercept / vgain
+
+        # MaxErr: テンプレートG列 (endpoint fit, 符号付き)
+        first_v = data_sorted[0][1]
+        first_code = int(data_sorted[0][0])
+        last_code = int(data_sorted[-1][0])
+        ep_slope = (data_sorted[-1][1] - first_v) / (last_code - first_code)
+        c1_ref = 160 / (2 ** 19)  # テンプレート C1 = B1/2^19
+        f_vals = []
+        for ucode, measured, _ in data_sorted:
+            e_val = ep_slope * int(ucode) + first_v
+            f_vals.append((measured - e_val) / c1_ref)
+        f_avg = float(np.mean(f_vals))
+        g_arr = np.array([f - f_avg for f in f_vals])
+        max_pos = float(np.max(g_arr))
+        min_neg = float(np.min(g_arr))
+        max_err = min_neg if abs(min_neg) > abs(max_pos) else max_pos
+
         ng_flags = []
-        if max_inl > criteria['inl']:
-            ng_flags.append('INL')
+        if abs(gain_lsb - 1.0) > self.th_gain.get():
+            ng_flags.append('Gain')
+        if abs(offset_lsb) > self.th_offset.get():
+            ng_flags.append('Offset')
+        if abs(max_err) > self.th_error.get():
+            ng_flags.append('Error')
 
         calc_results = {
-            'gain': ep_slope / pos_1lsb,
-            'offset': 0.0,
-            'max_error': max_inl,
+            'gain': gain_lsb,
+            'offset': offset_lsb,
+            'max_error': max_err,
             'ng': bool(ng_flags),
             'judge': 'NG' if ng_flags else 'OK',
             'ng_detail': ng_flags,
@@ -1207,8 +1244,9 @@ class LinearityTab(ttk.Frame):
             os.makedirs(save_dir, exist_ok=True)
             timestamp = time.strftime('%Y%m%d_%H%M%S')
             mode = self.pattern_mode.get().lower()
+            pts_str = f"_{n}pts" if mode in ('random', 'linear') else ""
             filename = (f"{serial_no}_{dac_name}_linearity_"
-                        f"{mode}_{timestamp}.xlsx")
+                        f"{mode}{pts_str}_{timestamp}.xlsx")
             filepath = os.path.join(save_dir, filename)
         shutil.copy2(template_path, filepath)
 
@@ -1224,6 +1262,11 @@ class LinearityTab(ttk.Frame):
         chart_tab_name = f"{serial_no}{pole[0]}_chart"[:31]
         for cs in wb.chartsheets:
             cs.title = chart_tab_name
+
+        # テンプレートの書式を保存 (Row 7 = 最初のデータ行)
+        col_formats_lin = {}
+        for c in range(1, 9):
+            col_formats_lin[c] = ws.cell(row=7, column=c).number_format
 
         # 旧データクリア (Row 7+)
         for r in range(7, ws.max_row + 1):
@@ -1270,6 +1313,9 @@ class LinearityTab(ttk.Frame):
             ws.cell(row=r, column=5, value=meas_dac)
             ws.cell(row=r, column=6, value=fit_val)
             ws.cell(row=r, column=7, value=err_lsb)
+            # テンプレート書式を適用
+            for c, fmt in col_formats_lin.items():
+                ws.cell(row=r, column=c).number_format = fmt
 
             if abs(err_lsb) > err_threshold:
                 ws.cell(row=r, column=8, value="NG")
@@ -1309,20 +1355,16 @@ class LinearityTab(ttk.Frame):
                         raw = zin.read(item.filename)
                         if item.filename == 'xl/charts/chart1.xml':
                             content = raw.decode('utf-8')
-                            # シート名参照を更新
                             content = content.replace(
                                 old_sheet_name, sheet_name)
-                            # セル参照の行範囲を更新
                             content = re.sub(
                                 r'([$][A-G][$]7:[$][A-G][$])\d+',
                                 rf'\g<1>{last_row}',
                                 content)
-                            # チャートタイトルを更新
                             content = re.sub(
                                 r'(<a:t>)[^<]*(</a:t>)',
                                 rf'\g<1>{title}\g<2>',
                                 content, count=1)
-                            # numCacheを削除 (Excel再計算)
                             content = re.sub(
                                 r'<numCache>.*?</numCache>',
                                 '', content, flags=re.DOTALL)
@@ -1434,6 +1476,17 @@ class LinearityTab(ttk.Frame):
 
         return None
 
+    def _delayed_delete(self, filepath, retries=10):
+        """ファイルを遅延削除（PNGエクスポート完了待ち、最大10秒リトライ）"""
+        if not os.path.exists(filepath):
+            return
+        try:
+            os.remove(filepath)
+        except Exception:
+            if retries > 0:
+                self.after(1000, lambda: self._delayed_delete(
+                    filepath, retries - 1))
+
     # ==================== グラフ表示 ====================
     def _export_png_async(self, export_func, data):
         """PNGエクスポートをバックグラウンドスレッドで実行"""
@@ -1472,10 +1525,12 @@ class LinearityTab(ttk.Frame):
     def _save_graph_ship_png(self, data):
         """XLSX内のグラフと表をExcel COM経由でPNGエクスポート"""
         xlsx_path = data.get('xlsx_path')
-        if not xlsx_path or not os.path.exists(xlsx_path):
+        if not xlsx_path:
             return None
 
         pole = data.get('pole', '')
+        serial_no = data.get('serial_no', '')
+        sheet_name = f"{serial_no}{pole[0]}"[:31]
         base = os.path.splitext(xlsx_path)[0]
         if base.endswith('_tmp'):
             base = base[:-4]
@@ -1490,8 +1545,25 @@ class LinearityTab(ttk.Frame):
             excel.Visible = False
             excel.DisplayAlerts = False
             try:
-                wb = excel.Workbooks.Open(os.path.abspath(xlsx_path))
-                ws = wb.Sheets(1)
+                xlsx_abs = os.path.abspath(xlsx_path)
+                # _tmp.xlsxがmergeで削除済みの場合、統合先にフォールバック
+                try:
+                    wb = excel.Workbooks.Open(xlsx_abs)
+                except Exception:
+                    if '_tmp.xlsx' in xlsx_path:
+                        xlsx_path = xlsx_path.replace('_tmp.xlsx', '.xlsx')
+                        xlsx_abs = os.path.abspath(xlsx_path)
+                        wb = excel.Workbooks.Open(xlsx_abs)
+                    else:
+                        raise
+                # シート名で検索（統合後は複数シートの場合あり）
+                ws = None
+                for i in range(1, wb.Sheets.Count + 1):
+                    if wb.Sheets(i).Name == sheet_name:
+                        ws = wb.Sheets(i)
+                        break
+                if ws is None:
+                    ws = wb.Sheets(1)
 
                 # グラフPNG
                 ws.ChartObjects(1).Chart.Export(os.path.abspath(chart_png))
@@ -1520,12 +1592,16 @@ class LinearityTab(ttk.Frame):
             return None
 
     def _save_graph_linear_png(self, data):
-        """Linear/Random/File XLSX内のチャートシートをExcel COM経由でPNGエクスポート"""
+        """Linear/Random/File XLSX内のグラフをExcel COM経由でPNGエクスポート
+        LBC: 埋め込みグラフ (ChartObjects), Position: チャートシート (Charts)"""
         xlsx_path = data.get('xlsx_path')
-        if not xlsx_path or not os.path.exists(xlsx_path):
+        if not xlsx_path:
             return None
 
         pole = data.get('pole', '')
+        dac_name = data.get('dac_name', '')
+        serial_no = data.get('serial_no', '')
+        sheet_name = f"{serial_no}{pole[0]}"[:31]
         base = os.path.splitext(xlsx_path)[0]
         if base.endswith('_tmp'):
             base = base[:-4]
@@ -1538,38 +1614,54 @@ class LinearityTab(ttk.Frame):
 
         try:
             import win32com.client
-            from PIL import ImageGrab
 
             excel = win32com.client.DispatchEx("Excel.Application")
             excel.DisplayAlerts = False
             try:
                 xlsx_abs = os.path.normpath(os.path.abspath(xlsx_path))
-                wb = excel.Workbooks.Open(xlsx_abs)
-                chart = wb.Charts(1)
+                # _tmp.xlsxがmergeで削除済みの場合、統合先にフォールバック
+                try:
+                    wb = excel.Workbooks.Open(xlsx_abs)
+                except Exception:
+                    if '_tmp.xlsx' in xlsx_path:
+                        xlsx_path = xlsx_path.replace('_tmp.xlsx', '.xlsx')
+                        xlsx_abs = os.path.normpath(
+                            os.path.abspath(xlsx_path))
+                        wb = excel.Workbooks.Open(xlsx_abs)
+                    else:
+                        raise
+
+                if dac_name == 'LBC':
+                    # LBC: 埋め込みグラフ — シート名で検索
+                    excel.Visible = False
+                    ws = None
+                    for i in range(1, wb.Sheets.Count + 1):
+                        if wb.Sheets(i).Name == sheet_name:
+                            ws = wb.Sheets(i)
+                            break
+                    if ws is None:
+                        ws = wb.Sheets(1)
+                    chart = ws.ChartObjects(1).Chart
+                else:
+                    # Position: チャートシートを名前で検索
+                    chart_tab = f"{serial_no}{pole[0]}_chart"[:31]
+                    chart = None
+                    for i in range(1, wb.Charts.Count + 1):
+                        if wb.Charts(i).Name == chart_tab:
+                            chart = wb.Charts(i)
+                            break
+                    if chart is None:
+                        chart = wb.Charts(1)
+                    excel.Visible = True
+                    chart.Activate()
+                    time.sleep(0.5)
 
                 # NG時はチャート背景を薄い黄色に
                 if data.get('results', {}).get('ng', False):
                     chart.PlotArea.Interior.Color = 13434879  # RGB(255,255,204)
                     wb.Save()
 
-                # チャートシートはレンダリングが必要なため一時的に表示
-                excel.Visible = True
-                chart.Activate()
-                time.sleep(0.5)
-
-                # 方法1: Export
                 chart.Export(png_abs, "PNG")
-
-                # 0バイトなら方法2: CopyPicture + クリップボード
-                if (not os.path.exists(png_abs)
-                        or os.path.getsize(png_abs) == 0):
-                    if os.path.exists(png_abs):
-                        os.remove(png_abs)
-                    chart.CopyPicture(Appearance=1, Format=2)
-                    time.sleep(0.5)
-                    img = ImageGrab.grabclipboard()
-                    if img:
-                        img.save(png_abs)
 
                 wb.Close(False)
             finally:
@@ -1578,7 +1670,7 @@ class LinearityTab(ttk.Frame):
 
             if os.path.exists(png_abs) and os.path.getsize(png_abs) > 0:
                 return chart_png
-            self.log("  PNG: Export/CopyPicture両方失敗", "WARNING")
+            self.log("  PNG: Export失敗", "WARNING")
             return None
         except Exception as e:
             self.log(f"  PNGエクスポートエラー: {e}", "WARNING")
@@ -1586,7 +1678,7 @@ class LinearityTab(ttk.Frame):
 
     def _merge_linear_xlsx(self, pole_results):
         """Linear/Random/File: POS/NEGのXLSXを1ファイルに統合
-        チャートシート + データシートをまとめてコピー"""
+        NEGの全シートをPOSファイルにコピー"""
         pos_xlsx = pole_results.get('POS', {}).get('xlsx_path')
         neg_xlsx = pole_results.get('NEG', {}).get('xlsx_path')
 
@@ -1603,7 +1695,7 @@ class LinearityTab(ttk.Frame):
                 wb_pos = excel.Workbooks.Open(os.path.abspath(pos_xlsx))
                 wb_neg = excel.Workbooks.Open(os.path.abspath(neg_xlsx))
 
-                # NEGの全シート（データシート + チャートシート）をPOSファイルにコピー
+                # NEGのデータシートをPOSファイルにコピー
                 for i in range(1, wb_neg.Sheets.Count + 1):
                     wb_neg.Sheets(i).Copy(
                         None, wb_pos.Sheets(wb_pos.Sheets.Count))
@@ -1614,12 +1706,8 @@ class LinearityTab(ttk.Frame):
             finally:
                 excel.Quit()
 
-            # NEG一時ファイル削除
-            try:
-                if os.path.exists(neg_xlsx):
-                    os.remove(neg_xlsx)
-            except Exception:
-                pass
+            # NEG一時ファイル削除（PNG非同期エクスポートと競合するため遅延）
+            self._delayed_delete(neg_xlsx)
 
             self.log(f"  XLSX統合完了: {pos_xlsx}", "SUCCESS")
 
@@ -1653,12 +1741,8 @@ class LinearityTab(ttk.Frame):
             finally:
                 excel.Quit()
 
-            # NEG一時ファイル削除
-            try:
-                if os.path.exists(neg_xlsx):
-                    os.remove(neg_xlsx)
-            except Exception:
-                pass
+            # NEG一時ファイル削除（PNG非同期エクスポートと競合するため遅延）
+            self._delayed_delete(neg_xlsx)
 
             self.log(f"  XLSX統合完了: {pos_xlsx}", "SUCCESS")
 

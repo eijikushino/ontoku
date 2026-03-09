@@ -2,6 +2,22 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.44] - 2026-03-09
+### 修正
+- LBC DAC_SPECS span値を2.0→6.18V (±3.09V) に修正
+- LBC Gain/Offset計算をPosition同様のLSQ（最小二乗法）ベースに統一
+- LBC MaxErr計算をテンプレートG列（F-AVERAGE(F)）準拠に修正、符号付き表示
+- LBC NG判定をGain/Offset/Errorの3項目に拡張
+- NEG _tmp.xlsx PNG非同期エクスポートとの競合を遅延削除で回避
+- PNG export: _tmp.xlsx統合済み時のフォールバック対応（COM Open失敗時に非tmpパスへ切替）
+
+### 改善
+- Random/Linearモードの保存ファイル名に測定点数 `_{n}pts` を付加
+- テンプレート行数超過時の小数点桁表示をテンプレート書式に合わせて保持
+- LBCテンプレートのchartsheet削除、埋め込みグラフのみ使用に変更
+- PNG export: LBC(埋め込みグラフ)/Position(チャートシート)でグラフ取得方法を分岐
+- 統合後ファイルでシート名検索によるPNG正確なシート取得
+
 ## [1.43] - 2026-03-05
 ### 追加
 - LBC Random/Linear/Fileモード専用XLSX出力 (`_save_xlsx_lbc_random`)

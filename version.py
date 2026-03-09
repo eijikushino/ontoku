@@ -1,6 +1,6 @@
 # version.py
-__version__ = "1.43"
-__build_date__ = "2026-03-05"
+__version__ = "1.44"
+__build_date__ = "2026-03-09"
 
 def get_version_string():
     return f"DEF Command Set App v{__version__} (Build: {__build_date__})"
