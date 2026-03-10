@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.45] - 2026-03-10
+### 変更
+- パターンモード名称変更: 「Linear」→「Sequential」、「出荷シーケンス」→「出荷Sequence」
+### 修正
+- LBCテンプレートG1セルの不要な数式を削除
+- LBCテンプレートB3セルのゴミデータ「+2^15」を削除
+### 追加
+- kobaton2カスタムパターンファイル（8188点/1000点抜粋、Fileモード用10進数形式）
+
 ## [1.44] - 2026-03-09
 ### 修正
 - LBC DAC_SPECS span値を2.0→6.18V (±3.09V) に修正

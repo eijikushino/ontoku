@@ -86,10 +86,15 @@ class LinearityTab(ttk.Frame):
 
         mode_frame = ttk.Frame(pat_frame)
         mode_frame.pack(fill=tk.X, pady=2)
-        ttk.Label(mode_frame, text="モード:").pack(side=tk.LEFT)
-        for value, label in [('Ship', '出荷シーケンス'), ('Random', 'Random'), ('Linear', 'Linear'), ('File', 'File')]:
+        ttk.Label(mode_frame, text="モード:").grid(row=0, column=0, sticky=tk.W, rowspan=2)
+        modes = [
+            (0, 1, 'Ship', '出荷Sequence'), (0, 2, 'Random', 'Random'),
+            (1, 1, 'Linear', 'Sequential'),  (1, 2, 'File', 'File'),
+        ]
+        for r, c, value, label in modes:
             ttk.Radiobutton(mode_frame, text=label, variable=self.pattern_mode,
-                            value=value, command=self._on_mode_changed).pack(side=tk.LEFT, padx=3)
+                            value=value, command=self._on_mode_changed).grid(
+                row=r, column=c, sticky=tk.W, padx=3)
 
         pts_frame = ttk.Frame(pat_frame)
         pts_frame.pack(fill=tk.X, pady=2)
@@ -560,7 +565,7 @@ class LinearityTab(ttk.Frame):
 
                         pole_cmd = 'p' if pole == 'POS' else 'n'
 
-                        # パターン生成 (出荷シーケンスはPOS/NEGで異なるパターン)
+                        # パターン生成 (出荷SequenceはPOS/NEGで異なるパターン)
                         try:
                             sweep_values = self._generate_pattern(bits, pole)
                         except ValueError as e:
@@ -633,7 +638,7 @@ class LinearityTab(ttk.Frame):
                             continue
 
                         if is_ship:
-                            # --- 出荷シーケンスモード: INL/DNL (Excelマクロ準拠) ---
+                            # --- 出荷Sequenceモード: INL/DNL (Excelマクロ準拠) ---
                             # コード昇順にソート (降順パターンの場合に対応)
                             paired = sorted(zip(x_vals, y_vals))
                             x_vals = [p[0] for p in paired]
@@ -671,7 +676,7 @@ class LinearityTab(ttk.Frame):
                             save_dir = self.save_dir.get()
                             os.makedirs(save_dir, exist_ok=True)
                             base_name = (f"{serial_no}_{dac_name}_linearity_"
-                                         f"出荷シーケンス_{common_timestamp}")
+                                         f"出荷Sequence_{common_timestamp}")
                             if pole == 'POS':
                                 xlsx_filepath = os.path.join(
                                     save_dir, base_name + '.xlsx')
@@ -966,7 +971,7 @@ class LinearityTab(ttk.Frame):
         os.makedirs(save_dir, exist_ok=True)
 
         timestamp = time.strftime('%Y%m%d_%H%M%S')
-        mode = '出荷シーケンス' if self.pattern_mode.get() == 'Ship' else self.pattern_mode.get()
+        mode = '出荷Sequence' if self.pattern_mode.get() == 'Ship' else self.pattern_mode.get()
         pts_str = (f"_{len(x_vals)}pts"
                    if self.pattern_mode.get() in ('Random', 'Linear') else "")
         filename = f"{serial_no}_{dac_name}_{pole}_linearity_{mode}{pts_str}_{timestamp}.csv"
@@ -1420,7 +1425,7 @@ class LinearityTab(ttk.Frame):
             os.makedirs(save_dir, exist_ok=True)
             timestamp = time.strftime('%Y%m%d_%H%M%S')
             filename = (f"{serial_no}_{dac_name}_{pole}_linearity_"
-                        f"出荷シーケンス_{timestamp}.xlsx")
+                        f"出荷Sequence_{timestamp}.xlsx")
             filepath = os.path.join(save_dir, filename)
 
         try:
