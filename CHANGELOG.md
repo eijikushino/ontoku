@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.48] - 2026-03-16
+### 変更
+- Sequentialモード時の保存ファイル名を「linear」→「sequential」に統一
+### 削除
+- 未使用の_save_csvメソッドを削除
+
 ## [1.47] - 2026-03-16
 ### 追加
 - Position用XLSX結果にオフセットバイナリ値(H列)とHEX(I列)を追加

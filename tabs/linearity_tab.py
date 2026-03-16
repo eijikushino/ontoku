@@ -723,9 +723,10 @@ class LinearityTab(ttk.Frame):
                             # --- 通常モード: XLSX保存 + Gain/Offset/Error ---
                             save_dir = self.save_dir.get()
                             os.makedirs(save_dir, exist_ok=True)
-                            mode = self.pattern_mode.get().lower()
+                            raw_mode = self.pattern_mode.get().lower()
+                            mode = 'sequential' if raw_mode == 'linear' else raw_mode
                             pts_str = (f"_{len(x_vals)}pts"
-                                       if mode in ('random', 'linear') else "")
+                                       if raw_mode in ('random', 'linear') else "")
                             base_name = (f"{serial_no}_{dac_name}_linearity_"
                                          f"{mode}{pts_str}_{common_timestamp}")
                             if pole == 'POS':
@@ -972,59 +973,6 @@ class LinearityTab(ttk.Frame):
             'v_per_lsb': v_per_lsb,
         }
 
-    # ==================== CSV保存 ====================
-    def _save_csv(self, results, x_vals, y_vals, dac_name, pole,
-                  def_info, serial_no, bits, span):
-        """計測結果をCSVファイルに保存"""
-        save_dir = self.save_dir.get()
-        os.makedirs(save_dir, exist_ok=True)
-
-        timestamp = time.strftime('%Y%m%d_%H%M%S')
-        mode = '出荷Sequence' if self.pattern_mode.get() == 'Ship' else self.pattern_mode.get()
-        pts_str = (f"_{len(x_vals)}pts"
-                   if self.pattern_mode.get() in ('Random', 'Linear') else "")
-        filename = f"{serial_no}_{dac_name}_{pole}_linearity_{mode}{pts_str}_{timestamp}.csv"
-        filepath = os.path.join(save_dir, filename)
-
-        v_per_lsb = results['v_per_lsb']
-        m = results['m']
-        b = results['b']
-
-        try:
-            with open(filepath, 'w', encoding='utf-8', newline='') as f:
-                # ヘッダ情報
-                f.write(f"# Linearity Test Result\n")
-                f.write(f"# Serial: {serial_no}\n")
-                f.write(f"# DEF: {def_info['name']}\n")
-                f.write(f"# DAC: {dac_name} ({bits}bit)\n")
-                f.write(f"# Pole: {pole}\n")
-                f.write(f"# Gain: {results['gain']:.8f}\n")
-                f.write(f"# Offset: {results['offset']:.6f} LSB\n")
-                f.write(f"# Max Error: {results['max_error']:.6f} LSB\n")
-                f.write(f"# Judge: {results['judge']}\n")
-                f.write(f"# Date: {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
-                f.write(f"# V_per_LSB: {v_per_lsb:.10e}\n")
-                f.write(f"# Slope(m): {m:.10e}\n")
-                f.write(f"# Intercept(b): {b:.10e}\n")
-                f.write(f"#\n")
-                f.write("Order,DAC_Set,DAC_HEX,Theoretical_V,Measured_V,"
-                        "FIT_V,Error_LSB,NG\n")
-
-                mask = (1 << bits) - 1
-                for i, (x, y_meas) in enumerate(zip(x_vals, y_vals)):
-                    hex_str = f"{x & mask:05X}"
-                    theoretical_v = -span / 2 + x * v_per_lsb
-                    fit_v = m * x + b
-                    error_lsb = results['errors'][i]
-                    ng_mark = "*" if abs(error_lsb) > self.th_error.get() else ""
-                    f.write(f"{i+1},{x},{hex_str},{theoretical_v:.6f},"
-                            f"{y_meas:.6f},{fit_v:.6f},{error_lsb:.4f},{ng_mark}\n")
-
-            return filepath
-        except Exception as e:
-            self._queue_update('log', (f"CSV保存エラー: {e}", "ERROR"))
-            return None
-
     def _save_xlsx_lbc_random(self, x_vals, y_vals, pole,
                               def_info, serial_no, bits, span,
                               filepath=None):
@@ -1059,8 +1007,9 @@ class LinearityTab(ttk.Frame):
             save_dir = self.save_dir.get()
             os.makedirs(save_dir, exist_ok=True)
             timestamp = time.strftime('%Y%m%d_%H%M%S')
-            mode = self.pattern_mode.get().lower()
-            pts_str = f"_{n}pts" if mode in ('random', 'linear') else ""
+            raw_mode = self.pattern_mode.get().lower()
+            mode = 'sequential' if raw_mode == 'linear' else raw_mode
+            pts_str = f"_{n}pts" if raw_mode in ('random', 'linear') else ""
             filename = (f"{serial_no}_LBC_linearity_"
                         f"{mode}{pts_str}_{timestamp}.xlsx")
             filepath = os.path.join(save_dir, filename)
@@ -1069,7 +1018,7 @@ class LinearityTab(ttk.Frame):
         wb = openpyxl.load_workbook(filepath)
         ws = wb['計算データ']
         old_sheet_name = ws.title
-        mode = self.pattern_mode.get().lower()
+        mode = 'sequential' if self.pattern_mode.get().lower() == 'linear' else self.pattern_mode.get().lower()
         sheet_name = f"{serial_no}{pole[0]}"[:31]
         ws.title = sheet_name
 
@@ -1284,15 +1233,16 @@ class LinearityTab(ttk.Frame):
             save_dir = self.save_dir.get()
             os.makedirs(save_dir, exist_ok=True)
             timestamp = time.strftime('%Y%m%d_%H%M%S')
-            mode = self.pattern_mode.get().lower()
-            pts_str = f"_{n}pts" if mode in ('random', 'linear') else ""
+            raw_mode = self.pattern_mode.get().lower()
+            mode = 'sequential' if raw_mode == 'linear' else raw_mode
+            pts_str = f"_{n}pts" if raw_mode in ('random', 'linear') else ""
             filename = (f"{serial_no}_{dac_name}_linearity_"
                         f"{mode}{pts_str}_{timestamp}.xlsx")
             filepath = os.path.join(save_dir, filename)
         shutil.copy2(template_path, filepath)
 
         # データシート書き換え
-        mode = self.pattern_mode.get().lower()
+        mode = 'sequential' if self.pattern_mode.get().lower() == 'linear' else self.pattern_mode.get().lower()
         sheet_name = f"{serial_no}{pole[0]}"[:31]
         wb = openpyxl.load_workbook(filepath)
         ws = wb['計算データ']
