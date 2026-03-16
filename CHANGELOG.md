@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.46] - 2026-03-16
+### 修正
+- LBC全モード(Random/Sequential/File)のXLSX保存にGain/Offset/MaxErr値とNG判定を追加(J-L列)
+- LBCテンプレートにGAIN/OFFSET/MaxErrラベル・書式を追加
+### 追加
+- LBC Fileモード動作確認用パターンファイル(200点等間隔)
+
 ## [1.45] - 2026-03-10
 ### 変更
 - パターンモード名称変更: 「Linear」→「Sequential」、「出荷シーケンス」→「出荷Sequence」

@@ -1104,41 +1104,7 @@ class LinearityTab(ttk.Frame):
             for c, fmt in col_formats_lbc.items():
                 ws.cell(row=r, column=c).number_format = fmt
 
-        try:
-            wb.save(filepath)
-        except Exception as e:
-            self._queue_update('log', (f"XLSX保存エラー: {e}", "ERROR"))
-            return None, None
-
-        # 埋め込みチャートXML更新 (シート名・データ範囲・タイトル)
-        try:
-            tmp = filepath + '.tmp'
-            with zipfile.ZipFile(filepath, 'r') as zin:
-                with zipfile.ZipFile(tmp, 'w') as zout:
-                    for item in zin.infolist():
-                        raw = zin.read(item.filename)
-                        if item.filename.startswith('xl/charts/chart'):
-                            content = raw.decode('utf-8')
-                            content = content.replace(
-                                old_sheet_name, sheet_name)
-                            content = re.sub(
-                                r'([$][A-I][$]4:[$][A-I][$])\d+',
-                                rf'\g<1>{last_row}', content)
-                            content = re.sub(
-                                r'(<a:t>)[^<]*(</a:t>)',
-                                rf'\g<1>{title}\g<2>',
-                                content, count=1)
-                            content = re.sub(
-                                r'<c:numCache>.*?</c:numCache>',
-                                '', content, flags=re.DOTALL)
-                            raw = content.encode('utf-8')
-                        zout.writestr(item, raw)
-            shutil.move(tmp, filepath)
-        except Exception as e:
-            self._queue_update('log', (
-                f"  チャート範囲更新エラー: {e}", "WARNING"))
-
-        # Gain/Offset: LSQ fit (Position と同じ計算方法)
+        # Gain/Offset/MaxErr: LSQ fit (Position と同じ計算方法)
         signed_arr = np.array(
             [int(d[0]) - offset_val for d in data_sorted], dtype=float)
         meas_arr = np.array([d[1] for d in data_sorted], dtype=float)
@@ -1191,6 +1157,62 @@ class LinearityTab(ttk.Frame):
             'judge': 'NG' if ng_flags else 'OK',
             'ng_detail': ng_flags,
         }
+
+        # J-L列: Gain/Offset/MaxErr 書き込み
+        red_font = Font(color="FF0000")
+        ws['K1'] = gain_lsb
+        ws['K1'].number_format = '0.000000'
+        ws['K2'] = offset_lsb
+        ws['K2'].number_format = '0.000'
+        ws['K3'] = max_err
+        ws['K3'].number_format = '0.000'
+
+        if 'Gain' in ng_flags:
+            ws['L1'] = 'NG'
+            for cell in ['J1', 'K1', 'L1']:
+                ws[cell].font = red_font
+        if 'Offset' in ng_flags:
+            ws['L2'] = 'NG'
+            for cell in ['J2', 'K2', 'L2']:
+                ws[cell].font = red_font
+        if 'Error' in ng_flags:
+            ws['L3'] = 'NG'
+            for cell in ['J3', 'K3', 'L3']:
+                ws[cell].font = red_font
+
+        try:
+            wb.save(filepath)
+        except Exception as e:
+            self._queue_update('log', (f"XLSX保存エラー: {e}", "ERROR"))
+            return None, None
+
+        # 埋め込みチャートXML更新 (シート名・データ範囲・タイトル)
+        try:
+            tmp = filepath + '.tmp'
+            with zipfile.ZipFile(filepath, 'r') as zin:
+                with zipfile.ZipFile(tmp, 'w') as zout:
+                    for item in zin.infolist():
+                        raw = zin.read(item.filename)
+                        if item.filename.startswith('xl/charts/chart'):
+                            content = raw.decode('utf-8')
+                            content = content.replace(
+                                old_sheet_name, sheet_name)
+                            content = re.sub(
+                                r'([$][A-I][$]4:[$][A-I][$])\d+',
+                                rf'\g<1>{last_row}', content)
+                            content = re.sub(
+                                r'(<a:t>)[^<]*(</a:t>)',
+                                rf'\g<1>{title}\g<2>',
+                                content, count=1)
+                            content = re.sub(
+                                r'<c:numCache>.*?</c:numCache>',
+                                '', content, flags=re.DOTALL)
+                            raw = content.encode('utf-8')
+                        zout.writestr(item, raw)
+            shutil.move(tmp, filepath)
+        except Exception as e:
+            self._queue_update('log', (
+                f"  チャート範囲更新エラー: {e}", "WARNING"))
 
         return filepath, calc_results
 
