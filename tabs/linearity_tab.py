@@ -56,6 +56,12 @@ class LinearityTab(ttk.Frame):
         self._load_settings()
         self._create_widgets()
 
+        # 全設定変数の変更を監視して自動保存
+        for var in [self.pattern_mode, self.num_points, self.dac_var,
+                    self.settle_time_var, self.th_gain, self.th_offset,
+                    self.th_error, self.save_dir, self.pattern_file]:
+            var.trace_add("write", lambda *_: self._save_settings())
+
     # ==================== UI ====================
     def _create_widgets(self):
         main = ttk.Frame(self)
@@ -89,7 +95,7 @@ class LinearityTab(ttk.Frame):
         ttk.Label(mode_frame, text="モード:").grid(row=0, column=0, sticky=tk.W, rowspan=2)
         modes = [
             (0, 1, 'Ship', '出荷Sequence'), (0, 2, 'Random', 'Random'),
-            (1, 1, 'Linear', 'Sequential'),  (1, 2, 'File', 'File'),
+            (1, 1, 'Linear', 'Sequential'),  (1, 2, 'File', 'File(ｵﾌｾｯﾄﾊﾞｲﾅﾘ10進数 0～)'),
         ]
         for r, c, value, label in modes:
             ttk.Radiobutton(mode_frame, text=label, variable=self.pattern_mode,
@@ -302,6 +308,7 @@ class LinearityTab(ttk.Frame):
                 self.th_offset.set(lin.get('th_offset', 10.0))
                 self.th_error.set(lin.get('th_error', 1.5))
                 self.save_dir.set(lin.get('save_dir', 'linearity_data'))
+                self.pattern_file.set(lin.get('pattern_file', ''))
         except Exception:
             pass
 
@@ -320,6 +327,7 @@ class LinearityTab(ttk.Frame):
                 'th_offset': self.th_offset.get(),
                 'th_error': self.th_error.get(),
                 'save_dir': self.save_dir.get(),
+                'pattern_file': self.pattern_file.get(),
             }
             with open('app_settings.json', 'w', encoding='utf-8') as f:
                 json.dump(config, f, indent=4, ensure_ascii=False)
@@ -348,6 +356,7 @@ class LinearityTab(ttk.Frame):
             filetypes=[("テキストファイル", "*.txt *.csv"), ("すべて", "*.*")])
         if path:
             self.pattern_file.set(path)
+            self._save_settings()
 
     def _browse_save_dir(self):
         d = filedialog.askdirectory(title="保存先フォルダを選択")
@@ -1158,6 +1167,11 @@ class LinearityTab(ttk.Frame):
             'ng_detail': ng_flags,
         }
 
+        # Fileモード: パターンファイル情報を記録
+        if self.pattern_mode.get() == 'File':
+            ws['N1'] = 'パターンファイル'
+            ws['N2'] = self.pattern_file.get()
+
         # J-L列: Gain/Offset/MaxErr 書き込み
         red_font = Font(color="FF0000")
         ws['K1'] = gain_lsb
@@ -1295,9 +1309,14 @@ class LinearityTab(ttk.Frame):
         for c in range(1, 9):
             col_formats_lin[c] = ws.cell(row=7, column=c).number_format
 
+        # H,I列ヘッダー追加
+        hex_digits = bits // 4  # Position=20bit→5桁, LBC=16bit→4桁
+        ws.cell(row=6, column=8, value='ｵﾌｾｯﾄﾊﾞｲﾅﾘ')
+        ws.cell(row=6, column=9, value='HEX')
+
         # 旧データクリア (Row 7+)
         for r in range(7, ws.max_row + 1):
-            for c in range(1, 9):
+            for c in range(1, 10):
                 ws.cell(row=r, column=c).value = None
 
         # ヘッダー
@@ -1308,6 +1327,11 @@ class LinearityTab(ttk.Frame):
         ws['B4'] = offset_lsb
         ws['C3'] = None
         ws['C4'] = None
+
+        # Fileモード: パターンファイル情報を記録
+        if self.pattern_mode.get() == 'File':
+            ws['A5'] = 'パターンファイル'
+            ws['B5'] = self.pattern_file.get()
 
         # GAIN NG判定
         red_font = Font(color="FF0000")
@@ -1340,13 +1364,17 @@ class LinearityTab(ttk.Frame):
             ws.cell(row=r, column=5, value=meas_dac)
             ws.cell(row=r, column=6, value=fit_val)
             ws.cell(row=r, column=7, value=err_lsb)
+            # H: オフセットバイナリ値, I: HEX
+            unsigned_val = s_val + offset_val
+            ws.cell(row=r, column=8, value=unsigned_val)
+            ws.cell(row=r, column=9, value=format(unsigned_val, f'0{hex_digits}X'))
             # テンプレート書式を適用
             for c, fmt in col_formats_lin.items():
                 ws.cell(row=r, column=c).number_format = fmt
 
             if abs(err_lsb) > err_threshold:
-                ws.cell(row=r, column=8, value="NG")
-                for c in range(1, 9):
+                ws.cell(row=r, column=10, value="NG")
+                for c in range(1, 11):
                     ws.cell(row=r, column=c).font = red_font
 
         # NG判定 (サマリー用)

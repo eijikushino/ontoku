@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.47] - 2026-03-16
+### 追加
+- Position用XLSX結果にオフセットバイナリ値(H列)とHEX(I列)を追加
+- Fileモード使用時、結果XLSXにパターンファイル名・パスを記録
+- Fileモードのパターンファイルパスを前回値保存
+- 全設定変数の変更時自動保存（試験開始不要）
+### 変更
+- FileモードUIラベルに入力形式の補足表示「File(ｵﾌｾｯﾄﾊﾞｲﾅﾘ10進数 0～)」
+- Position用XLSXのNG判定列をH列→J列に移動（H,I列追加のため）
+
 ## [1.46] - 2026-03-16
 ### 修正
 - LBC全モード(Random/Sequential/File)のXLSX保存にGain/Offset/MaxErr値とNG判定を追加(J-L列)
