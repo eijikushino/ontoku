@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.49] - 2026-03-16
+### 改善
+- Position用テンプレートにｵﾌｾｯﾄﾊﾞｲﾅﾘ/HEXヘッダーを追加（プログラム側の重複追記を削除）
+
 ## [1.48] - 2026-03-16
 ### 変更
 - Sequentialモード時の保存ファイル名を「linear」→「sequential」に統一

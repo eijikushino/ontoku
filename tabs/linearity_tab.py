@@ -1259,10 +1259,7 @@ class LinearityTab(ttk.Frame):
         for c in range(1, 9):
             col_formats_lin[c] = ws.cell(row=7, column=c).number_format
 
-        # H,I列ヘッダー追加
         hex_digits = bits // 4  # Position=20bit→5桁, LBC=16bit→4桁
-        ws.cell(row=6, column=8, value='ｵﾌｾｯﾄﾊﾞｲﾅﾘ')
-        ws.cell(row=6, column=9, value='HEX')
 
         # 旧データクリア (Row 7+)
         for r in range(7, ws.max_row + 1):
