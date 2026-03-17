@@ -15,6 +15,7 @@ from gpib_controller import GPIBController
 from tabs.dmm3458a_tab import DMM3458ATab
 from serial_manager import SerialManager
 from about_dialog import show_about_dialog
+from two_row_notebook import TwoRowNotebook
 from version import __version__
 
 class MainApplication(tk.Tk):
@@ -22,7 +23,7 @@ class MainApplication(tk.Tk):
         super().__init__()
 
         self.title(f"DEF Command Set App v{__version__}")
-        self.geometry("900x700")
+        self.geometry("900x780")
         
         # ウィンドウを閉じる際の処理
         self.protocol("WM_DELETE_WINDOW", self.on_closing)
@@ -41,39 +42,46 @@ class MainApplication(tk.Tk):
         # メニューバーの作成
         self.create_menu()
         
-        # タブコントロールの作成
-        self.notebook = ttk.Notebook(self)
+        # タブコントロールの作成（2段構成）
+        self.notebook = TwoRowNotebook(self)
         self.notebook.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
-        
+
+        # コンテンツ領域を各タブの親にする
+        content = self.notebook.content
+
         # 各タブの作成(2台のコントローラーとシリアルマネージャーを渡す)
-        self.comm_tab = CommunicationTab(self.notebook, self.gpib_3458a, self.gpib_3499b, self.serial_manager,
+        self.comm_tab = CommunicationTab(content, self.gpib_3458a, self.gpib_3499b, self.serial_manager,
                                           datagen_manager=self.datagen_manager, datagen_manager2=self.datagen_manager2)
-        self.test_tab = TestTab(self.notebook, self.serial_manager)  # serial_managerを渡す
-        self.graph_tab = GraphTab(self.notebook, self.gpib_3458a)
-        self.dac_tab = DACTab(self.notebook, self.gpib_3499b, self.serial_manager)
-        self.datagen_tab = DataGenTab(self.notebook, self.datagen_manager, self.datagen_manager2)
-        self.file_tab = FileTab(self.notebook)  # 設定管理用タブ（GPIB不要）
-        self.dmm3458a_tab = DMM3458ATab(self.notebook, self.gpib_3458a)
-        self.scanner_tab = ScannerTab(self.notebook, self.gpib_3499b)
-        self.linearity_tab = LinearityTab(self.notebook, self.gpib_3458a, self.gpib_3499b,
+        self.test_tab = TestTab(content, self.serial_manager)
+        self.graph_tab = GraphTab(content, self.gpib_3458a)
+        self.dac_tab = DACTab(content, self.gpib_3499b, self.serial_manager)
+        self.datagen_tab = DataGenTab(content, self.datagen_manager, self.datagen_manager2)
+        self.file_tab = FileTab(content)
+        self.dmm3458a_tab = DMM3458ATab(content, self.gpib_3458a)
+        self.scanner_tab = ScannerTab(content, self.gpib_3499b)
+        self.linearity_tab = LinearityTab(content, self.gpib_3458a, self.gpib_3499b,
                                            self.datagen_manager, self.test_tab)
 
         # TestタブにDACタブのDEF選択状態を共有
         self.test_tab.set_def_vars(self.dac_tab.def_vars)
-        
+
         # タブのスタイル設定（色分け・パディング）
         self._setup_tab_styles()
 
-        # タブの追加（両脇にスペースを追加）
-        self.notebook.add(self.comm_tab, text="  通信設定  ")
-        self.notebook.add(self.test_tab, text="  Pattern Test  ")
-        self.notebook.add(self.graph_tab, text="  グラフ描画  ")
-        self.notebook.add(self.dac_tab, text="  DEF操作  ")
-        self.notebook.add(self.datagen_tab, text="  DataGen  ")
-        self.notebook.add(self.file_tab, text="  ファイル保存  ")
-        self.notebook.add(self.dmm3458a_tab, text="  DMM3458A  ")
-        self.notebook.add(self.scanner_tab, text="  スキャナー  ")
-        self.notebook.add(self.linearity_tab, text="  Linearity  ")
+        # 1段目: メイン機能タブ
+        self.notebook.add(self.comm_tab, text="  通信設定  ", row=1)
+        self.notebook.add(self.file_tab, text="  ファイル保存  ", row=1)
+        # Pattern Test + グラフ描画をグループ枠で囲む
+        test_group = self.notebook.create_group(row=1, label="温特&パターン")
+        self.notebook.add(self.test_tab, text="  Pattern Test  ", row=1, group=test_group)
+        self.notebook.add(self.graph_tab, text="  グラフ描画  ", row=1, group=test_group)
+        self.notebook.add(self.linearity_tab, text="  Linearity  ", row=1)
+
+        # 2段目: 機器操作タブ
+        self.notebook.add(self.dac_tab, text="  DEF操作  ", row=2)
+        self.notebook.add(self.datagen_tab, text="  DataGen  ", row=2)
+        self.notebook.add(self.dmm3458a_tab, text="  DMM3458A  ", row=2)
+        self.notebook.add(self.scanner_tab, text="  スキャナー  ", row=2)
 
         # ステータスバーの作成
         self.create_statusbar()
@@ -110,14 +118,6 @@ class MainApplication(tk.Tk):
                   relief=[('pressed', 'sunken')],
                   lightcolor=[('pressed', '#808080')],
                   darkcolor=[('pressed', '#e8e8e8')])
-
-        # タブ全体のパディングを調整
-        style.configure('TNotebook.Tab', padding=[12, 6])
-
-        # タブ選択時のスタイル
-        style.map('TNotebook.Tab',
-                  background=[('selected', '#e0e8f0'), ('!selected', '#f0f0f0')],
-                  foreground=[('selected', '#000000'), ('!selected', '#444444')])
 
         # タブ変更時に色を適用
         self.notebook.bind('<<NotebookTabChanged>>', self._on_tab_changed)
@@ -168,45 +168,35 @@ class MainApplication(tk.Tk):
         self._apply_tab_colors()
 
     def _apply_tab_colors(self):
-        """各タブに色を適用"""
-        # タブごとの背景色を定義（グループ別に色分け）
+        """各タブに色を適用（2段タブ対応）"""
+        # 新しいタブ順序に合わせた色定義
+        # 1段目: 通信設定(0), ファイル保存(1), Pattern Test(2), グラフ描画(3), Linearity(4)
+        # 2段目: DEF操作(5), DataGen(6), DMM3458A(7), スキャナー(8)
         tab_colors = {
-            0: '#d4e6f1',  # 通信設定 - 青系（通信グループ）
-            1: '#d5f5e3',  # Pattern Test - 緑系（テストグループ）
-            2: '#fdebd0',  # グラフ描画 - オレンジ系（分析グループ）
-            3: '#e8daef',  # DEF操作 - 紫系（操作グループ）
-            4: '#fce4d6',  # DataGen - 暖色系
-            5: '#fdebd0',  # ファイル保存 - オレンジ系（分析グループ）
-            6: '#d4e6f1',  # DMM3458A - 青系（通信グループ）
-            7: '#d4e6f1',  # スキャナー - 青系（通信グループ）
-            8: '#d5f5e3',  # Linearity - 緑系（テストグループ）
+            0: '#d4e6f1',  # 通信設定 - 青系
+            1: '#d4e6f1',  # ファイル保存 - 青系（通信設定と同色）
+            2: '#d5f5e3',  # Pattern Test - 緑系（テストグループ）
+            3: '#d5f5e3',  # グラフ描画 - 緑系（テストグループ）
+            4: '#d5f5e3',  # Linearity - 緑系
+            5: '#e8daef',  # DEF操作 - 紫系（機器操作統一）
+            6: '#e8daef',  # DataGen - 紫系（機器操作統一）
+            7: '#e8daef',  # DMM3458A - 紫系（機器操作統一）
+            8: '#e8daef',  # スキャナー - 紫系（機器操作統一）
         }
 
-        # 現在選択されているタブのインデックス
-        try:
-            selected = self.notebook.index(self.notebook.select())
-        except:
-            selected = 0
-
-        # 選択タブの色を少し濃くする
         selected_colors = {
             0: '#a9cce3',  # 通信設定
-            1: '#abebc6',  # Pattern Test
-            2: '#f5cba7',  # グラフ描画
-            3: '#d2b4de',  # DEF操作
-            4: '#f0c4a8',  # DataGen
-            5: '#f5cba7',  # ファイル保存
-            6: '#a9cce3',  # DMM3458A
-            7: '#a9cce3',  # スキャナー
-            8: '#abebc6',  # Linearity
+            1: '#a9cce3',  # ファイル保存（通信設定と同色）
+            2: '#abebc6',  # Pattern Test
+            3: '#abebc6',  # グラフ描画
+            4: '#abebc6',  # Linearity
+            5: '#d2b4de',  # DEF操作
+            6: '#d2b4de',  # DataGen
+            7: '#d2b4de',  # DMM3458A
+            8: '#d2b4de',  # スキャナー
         }
 
-        # スタイルを動的に更新
-        style = ttk.Style()
-        if selected in selected_colors:
-            style.map('TNotebook.Tab',
-                      background=[('selected', selected_colors[selected]),
-                                  ('!selected', '#f5f5f5')])
+        self.notebook.set_tab_colors(tab_colors, selected_colors)
 
     def create_menu(self):
         """メニューバーを作成"""
