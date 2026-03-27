@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.52] - 2026-03-27
+### 追加
+- DC特性タブ（POSTION/LBC/moni自動計測、XLSX保存、matplotlib PNG出力）
+- dc_char_definitions.py（期待値・許容誤差・アドレスコード定義）
+- DC特性テンプレートXLSX 3種（template/dc_char_position/lbc/moni.xlsx）
+- Linearityタブ右横にDC特性タブを配置（緑系カラー）
+
 ## [1.51] - 2026-03-27
 ### 追加
 - 常駐リーダースレッド（queue経由でシリアル受信データを~60fpsでUI表示）

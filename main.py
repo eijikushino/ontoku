@@ -11,6 +11,7 @@ from tabs.datagen_tab import DataGenTab
 from tabs.file_tab import FileTab
 from tabs.scanner_tab import ScannerTab
 from tabs.linearity_tab import LinearityTab
+from tabs.dc_char_tab import DCCharTab
 from gpib_controller import GPIBController
 from tabs.dmm3458a_tab import DMM3458ATab
 from serial_manager import SerialManager
@@ -61,6 +62,8 @@ class MainApplication(tk.Tk):
         self.scanner_tab = ScannerTab(content, self.gpib_3499b)
         self.linearity_tab = LinearityTab(content, self.gpib_3458a, self.gpib_3499b,
                                            self.datagen_manager, self.test_tab)
+        self.dc_char_tab = DCCharTab(content, self.gpib_3458a, self.gpib_3499b,
+                                      self.datagen_manager, self.test_tab)
 
         # TestタブにDACタブのDEF選択状態を共有
         self.test_tab.set_def_vars(self.dac_tab.def_vars)
@@ -76,6 +79,7 @@ class MainApplication(tk.Tk):
         self.notebook.add(self.test_tab, text="  Pattern Test  ", row=1, group=test_group)
         self.notebook.add(self.graph_tab, text="  グラフ描画  ", row=1, group=test_group)
         self.notebook.add(self.linearity_tab, text="  Linearity  ", row=1)
+        self.notebook.add(self.dc_char_tab, text="  DC特性  ", row=1)
 
         # 2段目: 機器操作タブ
         self.notebook.add(self.dac_tab, text="  DEF操作  ", row=2)
@@ -170,30 +174,32 @@ class MainApplication(tk.Tk):
     def _apply_tab_colors(self):
         """各タブに色を適用（2段タブ対応）"""
         # 新しいタブ順序に合わせた色定義
-        # 1段目: 通信設定(0), ファイル保存(1), Pattern Test(2), グラフ描画(3), Linearity(4)
-        # 2段目: DEF操作(5), DataGen(6), DMM3458A(7), スキャナー(8)
+        # 1段目: 通信設定(0), ファイル保存(1), Pattern Test(2), グラフ描画(3), Linearity(4), DC特性(5)
+        # 2段目: DEF操作(6), DataGen(7), DMM3458A(8), スキャナー(9)
         tab_colors = {
             0: '#d4e6f1',  # 通信設定 - 青系
-            1: '#d4e6f1',  # ファイル保存 - 青系（通信設定と同色）
-            2: '#d5f5e3',  # Pattern Test - 緑系（テストグループ）
-            3: '#d5f5e3',  # グラフ描画 - 緑系（テストグループ）
+            1: '#d4e6f1',  # ファイル保存 - 青系
+            2: '#d5f5e3',  # Pattern Test - 緑系
+            3: '#d5f5e3',  # グラフ描画 - 緑系
             4: '#d5f5e3',  # Linearity - 緑系
-            5: '#e8daef',  # DEF操作 - 紫系（機器操作統一）
-            6: '#e8daef',  # DataGen - 紫系（機器操作統一）
-            7: '#e8daef',  # DMM3458A - 紫系（機器操作統一）
-            8: '#e8daef',  # スキャナー - 紫系（機器操作統一）
+            5: '#d5f5e3',  # DC特性 - 緑系
+            6: '#e8daef',  # DEF操作 - 紫系
+            7: '#e8daef',  # DataGen - 紫系
+            8: '#e8daef',  # DMM3458A - 紫系
+            9: '#e8daef',  # スキャナー - 紫系
         }
 
         selected_colors = {
             0: '#a9cce3',  # 通信設定
-            1: '#a9cce3',  # ファイル保存（通信設定と同色）
+            1: '#a9cce3',  # ファイル保存
             2: '#abebc6',  # Pattern Test
             3: '#abebc6',  # グラフ描画
             4: '#abebc6',  # Linearity
-            5: '#d2b4de',  # DEF操作
-            6: '#d2b4de',  # DataGen
-            7: '#d2b4de',  # DMM3458A
-            8: '#d2b4de',  # スキャナー
+            5: '#abebc6',  # DC特性
+            6: '#d2b4de',  # DEF操作
+            7: '#d2b4de',  # DataGen
+            8: '#d2b4de',  # DMM3458A
+            9: '#d2b4de',  # スキャナー
         }
 
         self.notebook.set_tab_colors(tab_colors, selected_colors)
