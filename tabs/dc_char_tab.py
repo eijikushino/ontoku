@@ -15,9 +15,9 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 
 from dc_char_definitions import (
-    POSITION_TEST_POINTS, POSITION_EXPECTED_STRINGS,
+    POSITION_TEST_POINTS, POSITION_EXPECTED_STRINGS, POSITION_DISPLAY_ORDER,
     LBC_TEST_POINTS, LBC_EXPECTED_STRINGS,
-    MONI_TEST_POINTS, MONI_EXPECTED_STRINGS,
+    MONI_TEST_POINTS, MONI_EXPECTED_STRINGS, MONI_DISPLAY_ORDER,
     DMM_RANGE_POSITION, DMM_RANGE_LBC, DMM_RANGE_MONI,
 )
 
@@ -44,6 +44,8 @@ class DCCharTab(ttk.Frame):
         # Settings
         self.save_dir = tk.StringVar(value='dc_char_data')
         self.settle_time_var = tk.DoubleVar(value=0.3)
+        self.switch_delay_sec = tk.DoubleVar(value=1.0)  # Pattern Testと共有
+        self.test_type = tk.StringVar(value='Position')  # Position / LBC / moni
 
         # Results
         self._results = {}  # {def_index: {'position': [...], 'lbc': [...], 'moni': [...]}}
@@ -65,6 +67,9 @@ class DCCharTab(ttk.Frame):
                 self.save_dir.set(s['save_dir'])
             if 'settle_time' in s:
                 self.settle_time_var.set(s['settle_time'])
+            # スキャナ切替時間はPattern Testと共有（measurement_window.switch_delay_sec）
+            sw = config.get("measurement_window", {}).get("switch_delay_sec", 1.0)
+            self.switch_delay_sec.set(max(0.4, sw))
         except Exception:
             pass
 
@@ -96,15 +101,32 @@ class DCCharTab(ttk.Frame):
         paned.add(right, weight=1)
 
         # === 左パネル ===
+        # 試験種別選択（排他）
+        type_frame = ttk.LabelFrame(left, text="試験種別", padding=5)
+        type_frame.pack(fill="x", padx=5, pady=(5, 2))
+
+        type_row = ttk.Frame(type_frame)
+        type_row.pack(fill="x")
+        for t in ["Position", "LBC", "moni"]:
+            ttk.Radiobutton(type_row, text=t, variable=self.test_type,
+                            value=t).pack(side="left", padx=(0, 15))
+
         # 試験設定
         settings_frame = ttk.LabelFrame(left, text="試験設定", padding=5)
-        settings_frame.pack(fill="x", padx=5, pady=(5, 2))
+        settings_frame.pack(fill="x", padx=5, pady=2)
 
         row = ttk.Frame(settings_frame)
         row.pack(fill="x", pady=2)
         ttk.Label(row, text="DAC安定待ち:").pack(side="left")
         ttk.Entry(row, textvariable=self.settle_time_var, width=6).pack(side="left", padx=(5, 2))
         ttk.Label(row, text="sec").pack(side="left")
+
+        row2 = ttk.Frame(settings_frame)
+        row2.pack(fill="x", pady=2)
+        ttk.Label(row2, text="スキャナ切替:").pack(side="left")
+        ttk.Label(row2, textvariable=self.switch_delay_sec,
+                  font=("Arial", 9, "bold")).pack(side="left", padx=(5, 2))
+        ttk.Label(row2, text="sec (Pattern Test共有)").pack(side="left")
 
         # DEF選択 & スキャナCH (test_tabの変数を共有)
         def_frame = ttk.LabelFrame(left, text="DEF選択 & スキャナCH", padding=5)
@@ -124,9 +146,10 @@ class DCCharTab(ttk.Frame):
                 ttk.Combobox(row, textvariable=self.test_tab.scanner_channels_neg[i],
                              values=ch_values, width=5, state="readonly").pack(side="left", padx=2)
 
-        # 実行制御
-        ctrl_frame = ttk.LabelFrame(left, text="実行制御", padding=5)
-        ctrl_frame.pack(fill="x", padx=5, pady=2)
+        # === 右パネル ===
+        # 実行制御（右上に配置、保存先パスを広く表示）
+        ctrl_frame = ttk.LabelFrame(right, text="実行制御", padding=5)
+        ctrl_frame.pack(fill="x", padx=5, pady=(5, 2))
 
         btn_row = ttk.Frame(ctrl_frame)
         btn_row.pack(fill="x", pady=2)
@@ -134,49 +157,44 @@ class DCCharTab(ttk.Frame):
         self.btn_start.pack(side="left", padx=2)
         self.btn_stop = ttk.Button(btn_row, text="停止", command=self._stop_measurement, state="disabled")
         self.btn_stop.pack(side="left", padx=2)
+        self.var_progress_label = tk.StringVar(value="待機中")
+        ttk.Label(btn_row, textvariable=self.var_progress_label,
+                  font=("Arial", 9)).pack(side="left", padx=(15, 0))
 
         save_row = ttk.Frame(ctrl_frame)
         save_row.pack(fill="x", pady=2)
         ttk.Label(save_row, text="保存先:").pack(side="left")
-        ttk.Entry(save_row, textvariable=self.save_dir, width=20).pack(side="left", padx=2)
+        ttk.Entry(save_row, textvariable=self.save_dir).pack(side="left", fill="x", expand=True, padx=2)
         ttk.Button(save_row, text="参照", width=4,
                    command=self._browse_save_dir).pack(side="left")
 
-        # === 右パネル ===
-        # 進捗
-        progress_frame = ttk.LabelFrame(right, text="進捗", padding=5)
-        progress_frame.pack(fill="x", padx=5, pady=(5, 2))
-
-        self.var_progress_label = tk.StringVar(value="待機中")
-        ttk.Label(progress_frame, textvariable=self.var_progress_label,
-                  font=("Arial", 10)).pack(anchor="w")
-
-        self.var_progress_value = tk.StringVar(value="")
-        ttk.Label(progress_frame, textvariable=self.var_progress_value,
-                  font=("Consolas", 10, "bold")).pack(anchor="w")
-
-        self.progress_bar = ttk.Progressbar(progress_frame, mode="determinate")
-        self.progress_bar.pack(fill="x", pady=(2, 0))
-
-        # 結果サマリー
+        # 結果サマリー（測定電圧表示）
         result_frame = ttk.LabelFrame(right, text="結果サマリー", padding=5)
         result_frame.pack(fill="both", expand=True, padx=5, pady=2)
 
-        columns = ('def_name', 'test', 'result')
-        self.tree = ttk.Treeview(result_frame, columns=columns, show='headings', height=15)
+        columns = ('def_name', 'part', 'code', 'voltage', 'expected', 'error', 'judge')
+        self.tree = ttk.Treeview(result_frame, columns=columns, show='headings', height=18)
         self.tree.heading('def_name', text='DEF')
-        self.tree.heading('test', text='試験')
-        self.tree.heading('result', text='結果')
-        self.tree.column('def_name', width=80)
-        self.tree.column('test', width=100)
-        self.tree.column('result', width=60)
+        self.tree.heading('part', text='部')
+        self.tree.heading('code', text='ｺｰﾄﾞ')
+        self.tree.heading('voltage', text='計測値(V)')
+        self.tree.heading('expected', text='期待値')
+        self.tree.heading('error', text='誤差(V)')
+        self.tree.heading('judge', text='結果')
+        self.tree.column('def_name', width=55, anchor='center')
+        self.tree.column('part', width=40, anchor='center')
+        self.tree.column('code', width=65, anchor='center')
+        self.tree.column('voltage', width=120, anchor='e')
+        self.tree.column('expected', width=120, anchor='center')
+        self.tree.column('error', width=110, anchor='e')
+        self.tree.column('judge', width=40, anchor='center')
         self.tree.tag_configure('ok', background='#d5f5e3')
         self.tree.tag_configure('ng', background='#f5b7b1')
-        self.tree.pack(fill="both", expand=True)
 
         scrollbar = ttk.Scrollbar(result_frame, orient="vertical", command=self.tree.yview)
         self.tree.configure(yscrollcommand=scrollbar.set)
         scrollbar.pack(side="right", fill="y")
+        self.tree.pack(fill="both", expand=True)
 
     def _browse_save_dir(self):
         d = filedialog.askdirectory(title="保存先ディレクトリ選択")
@@ -191,10 +209,10 @@ class DCCharTab(ttk.Frame):
             return
 
         # 接続確認
-        if not self.gpib_dmm or not self.gpib_dmm.is_connected:
+        if not self.gpib_dmm or not self.gpib_dmm.connected:
             messagebox.showerror("エラー", "DMM (3458A) が未接続です")
             return
-        if not self.gpib_scanner or not self.gpib_scanner.is_connected:
+        if not self.gpib_scanner or not self.gpib_scanner.connected:
             messagebox.showerror("エラー", "スキャナー (3499B) が未接続です")
             return
         if not self.datagen or not self.datagen.is_connected():
@@ -227,15 +245,12 @@ class DCCharTab(ttk.Frame):
             for _ in range(50):
                 msg_type, data = self._update_queue.get_nowait()
                 if msg_type == 'progress':
-                    label, value, current, total = data
-                    self.var_progress_label.set(label)
-                    self.var_progress_value.set(value)
-                    self.progress_bar['maximum'] = total
-                    self.progress_bar['value'] = current
-                elif msg_type == 'result':
-                    def_name, test_name, judge = data
-                    tag = 'ok' if judge == 'OK' else 'ng'
-                    self.tree.insert('', 'end', values=(def_name, test_name, judge), tags=(tag,))
+                    self.var_progress_label.set(data)
+                elif msg_type == 'row':
+                    # (def_name, part, code, voltage_str, expected_str, error_str, judge)
+                    tag = 'ok' if data[-1] == 'OK' else 'ng'
+                    self.tree.insert('', 'end', values=data, tags=(tag,))
+                    self.tree.see(self.tree.get_children()[-1])
                 elif msg_type == 'done':
                     self.var_progress_label.set("完了")
                     self.is_running = False
@@ -285,6 +300,7 @@ class DCCharTab(ttk.Frame):
 
     # ==================== ハードウェア操作 ====================
     def _scanner_cpon(self):
+        """スキャナー全チャンネルOPEN (cpon)"""
         orig_timeout = self.gpib_scanner.instrument.timeout
         self.gpib_scanner.instrument.timeout = 5000
         try:
@@ -293,12 +309,18 @@ class DCCharTab(ttk.Frame):
             self.gpib_scanner.instrument.timeout = orig_timeout
 
     def _switch_scanner(self, channel_addr, switch_delay):
+        """スキャナCH切替（Pattern Testと同じcpon方式）
+        cpon → sleep(delay/2) → *OPC? → CLOSE → sleep(delay/2)
+        """
         orig_timeout = self.gpib_scanner.instrument.timeout
         self.gpib_scanner.instrument.timeout = 5000
         try:
+            # cponで全チャンネルOPEN
             self.gpib_scanner.write(f":system:cpon {self.scanner_slot}")
             time.sleep(switch_delay / 2)
+            # *OPC?でcpon完了を確認
             self.gpib_scanner.query("*OPC?")
+            # 対象CHをCLOSE
             self.gpib_scanner.write(f"CLOSE ({channel_addr})")
             time.sleep(switch_delay / 2)
         finally:
@@ -321,22 +343,35 @@ class DCCharTab(ttk.Frame):
         self.datagen.send_command(cmd)
         time.sleep(0.05)
 
-    def _set_dmm_range(self, range_str):
-        self.gpib_dmm.write(f"DCV {range_str}")
-        time.sleep(0.1)
+    def _ch_addr(self, ch_str):
+        """CH番号文字列からスキャナアドレスを生成 (例: 'CH01' → '@101')"""
+        num = ch_str.replace("CH", "")
+        return f"@{self.scanner_slot}{num}"
 
     # ==================== 計測ワーカー ====================
     def _measurement_worker(self, selected_defs):
         try:
             settle = self.settle_time_var.get()
-            total_steps = len(selected_defs) * (len(POSITION_TEST_POINTS) + len(LBC_TEST_POINTS) + len(MONI_TEST_POINTS))
-            current_step = 0
+            switch_delay = self.switch_delay_sec.get()
+            test_type = self.test_type.get()
 
             # 初期化
             self._scanner_cpon()
             self._datagen_send("gen stop")
             self._datagen_send("func alt")
             self._datagen_send("alt s sa")
+
+            # DMM設定: NPLC 10
+            self.gpib_dmm.write("NPLC 10")
+            time.sleep(0.1)
+
+            # DMMレンジ設定
+            if test_type == "Position":
+                self.gpib_dmm.write("DCV 1000")
+            else:
+                self.gpib_dmm.write("DCV AUTO")
+            time.sleep(0.1)
+
             self._datagen_send("gen start")
 
             for def_info in selected_defs:
@@ -347,158 +382,12 @@ class DCCharTab(ttk.Frame):
                 def_idx = def_info['index']
                 self._results[def_idx] = {'position': [], 'lbc': [], 'moni': []}
 
-                # --- POSTION計測 ---
-                self._set_dmm_range(DMM_RANGE_POSITION)
-                pos_all_ok = True
-                for pi, tp in enumerate(POSITION_TEST_POINTS):
-                    if self._stop_event.is_set():
-                        break
-                    current_step += 1
-                    self._update_queue.put(('progress', (
-                        f"{def_name} / POSTION / {tp.part} {tp.display_code}",
-                        "", current_step, total_steps
-                    )))
-
-                    # DAC設定
-                    pole = "p" if tp.part == "POS" else "n"
-                    self._datagen_send(f"alt a {tp.address_code} ci {pole}")
-                    time.sleep(settle)
-
-                    # スキャナ切替 & 計測
-                    ch = def_info['pos_channel'] if tp.part == "POS" else def_info['neg_channel']
-                    ch_addr = f"{self.scanner_slot}{ch}"
-                    self._switch_scanner(ch_addr, settle)
-                    voltage = self._measure_voltage()
-
-                    # 判定
-                    if voltage is not None:
-                        error = voltage - tp.expected
-                        error_pct = (error / tp.expected * 100) if tp.expected != 0 else 0
-                        judge = "OK" if abs(error) <= tp.tolerance else "NG"
-                    else:
-                        error, error_pct, judge = None, None, "NG"
-
-                    if judge != "OK":
-                        pos_all_ok = False
-
-                    self._results[def_idx]['position'].append({
-                        'part': tp.part, 'code': tp.display_code,
-                        'voltage': voltage, 'expected_str': POSITION_EXPECTED_STRINGS[pi],
-                        'error': error, 'error_pct': error_pct, 'judge': judge,
-                    })
-
-                    self._update_queue.put(('progress', (
-                        f"{def_name} / POSTION / {tp.part} {tp.display_code}",
-                        f"{voltage:.6f} V" if voltage else "計測失敗",
-                        current_step, total_steps
-                    )))
-
-                self._update_queue.put(('result', (def_name, 'POSTION', 'OK' if pos_all_ok else 'NG')))
-
-                # --- LBC計測 ---
-                if self._stop_event.is_set():
-                    break
-                self._set_dmm_range(DMM_RANGE_LBC)
-                lbc_all_ok = True
-                for li, tp in enumerate(LBC_TEST_POINTS):
-                    if self._stop_event.is_set():
-                        break
-                    current_step += 1
-                    self._update_queue.put(('progress', (
-                        f"{def_name} / LBC / ATT{tp.att} {tp.display_code}",
-                        "", current_step, total_steps
-                    )))
-
-                    # ATT設定 + DAC設定
-                    # ATT切替はcmodeコマンドで実施（LBC ATT設定）
-                    self._datagen_send(f"alt a {tp.address_code} cii p")
-                    time.sleep(settle)
-
-                    # POS計測
-                    ch_pos = f"{self.scanner_slot}{def_info['pos_channel']}"
-                    self._switch_scanner(ch_pos, settle)
-                    voltage_pos = self._measure_voltage()
-
-                    # NEG計測
-                    ch_neg = f"{self.scanner_slot}{def_info['neg_channel']}"
-                    self._switch_scanner(ch_neg, settle)
-                    voltage_neg = self._measure_voltage()
-
-                    # 判定
-                    if voltage_pos is not None and voltage_neg is not None:
-                        error_pos = voltage_pos - tp.expected_pos
-                        error_neg = voltage_neg - tp.expected_neg
-                        judge = "OK" if abs(error_pos) <= tp.tolerance and abs(error_neg) <= tp.tolerance else "NG"
-                    else:
-                        error_pos, error_neg, judge = None, None, "NG"
-
-                    if judge != "OK":
-                        lbc_all_ok = False
-
-                    self._results[def_idx]['lbc'].append({
-                        'att': tp.att, 'code': tp.display_code,
-                        'voltage_pos': voltage_pos, 'voltage_neg': voltage_neg,
-                        'expected_str': LBC_EXPECTED_STRINGS[li],
-                        'error_pos': error_pos, 'error_neg': error_neg, 'judge': judge,
-                    })
-
-                    disp = f"POS:{voltage_pos:.6f} NEG:{voltage_neg:.6f}" if voltage_pos and voltage_neg else "計測失敗"
-                    self._update_queue.put(('progress', (
-                        f"{def_name} / LBC / ATT{tp.att} {tp.display_code}",
-                        disp, current_step, total_steps
-                    )))
-
-                self._update_queue.put(('result', (def_name, 'LBC', 'OK' if lbc_all_ok else 'NG')))
-
-                # --- moni計測 ---
-                if self._stop_event.is_set():
-                    break
-                self._set_dmm_range(DMM_RANGE_MONI)
-                moni_all_ok = True
-                for mi, tp in enumerate(MONI_TEST_POINTS):
-                    if self._stop_event.is_set():
-                        break
-                    current_step += 1
-                    self._update_queue.put(('progress', (
-                        f"{def_name} / moni / {tp.part} {tp.display_code}",
-                        "", current_step, total_steps
-                    )))
-
-                    # DAC設定
-                    pole = "p" if tp.part == "POS" else "n"
-                    self._datagen_send(f"alt a {tp.address_code} ci {pole}")
-                    time.sleep(settle)
-
-                    # スキャナ切替 & 計測
-                    ch = def_info['pos_channel'] if tp.part == "POS" else def_info['neg_channel']
-                    ch_addr = f"{self.scanner_slot}{ch}"
-                    self._switch_scanner(ch_addr, settle)
-                    voltage = self._measure_voltage()
-
-                    # 判定
-                    if voltage is not None:
-                        error = voltage - tp.expected
-                        error_pct = (error / tp.expected * 100) if tp.expected != 0 else 0
-                        judge = "OK" if abs(error) <= tp.tolerance else "NG"
-                    else:
-                        error, error_pct, judge = None, None, "NG"
-
-                    if judge != "OK":
-                        moni_all_ok = False
-
-                    self._results[def_idx]['moni'].append({
-                        'part': tp.part, 'code': tp.display_code,
-                        'voltage': voltage, 'expected_str': MONI_EXPECTED_STRINGS[mi],
-                        'error': error, 'error_pct': error_pct, 'judge': judge,
-                    })
-
-                    self._update_queue.put(('progress', (
-                        f"{def_name} / moni / {tp.part} {tp.display_code}",
-                        f"{voltage:.6f} V" if voltage else "計測失敗",
-                        current_step, total_steps
-                    )))
-
-                self._update_queue.put(('result', (def_name, 'moni', 'OK' if moni_all_ok else 'NG')))
+                if test_type == "Position":
+                    self._run_position_test(def_info, settle, switch_delay)
+                elif test_type == "LBC":
+                    self._run_lbc_test(def_info, settle, switch_delay)
+                else:  # moni
+                    self._run_moni_test(def_info, settle, switch_delay)
 
             # 後片付け
             self._scanner_cpon()
@@ -520,13 +409,16 @@ class DCCharTab(ttk.Frame):
                 xlsx_path = self._save_xlsx(results, save_dir, sn, timestamp)
                 saved_files.append(xlsx_path)
 
-                # PNG保存
-                for sheet_name in ['position', 'lbc', 'moni']:
-                    png_path = self._generate_table_png(
-                        sheet_name, results[sheet_name],
-                        save_dir, sn, timestamp
-                    )
-                    saved_files.append(png_path)
+                # PNG保存（計測順→Excel表示順にリオーダー）
+                sheet_name = test_type.lower()
+                if sheet_name == 'position':
+                    display_data = self._reorder_for_display(results['position'], POSITION_DISPLAY_ORDER)
+                elif sheet_name == 'moni':
+                    display_data = self._reorder_for_display(results['moni'], MONI_DISPLAY_ORDER)
+                else:
+                    display_data = results['lbc']
+                png_path = self._generate_table_png(sheet_name, display_data, save_dir, sn, timestamp)
+                saved_files.append(png_path)
 
             msg = f"保存完了:\n" + "\n".join(saved_files)
             self._update_queue.put(('done', msg))
@@ -534,22 +426,155 @@ class DCCharTab(ttk.Frame):
         except Exception as e:
             self._update_queue.put(('error', str(e)))
 
+    def _run_position_test(self, def_info, settle, switch_delay):
+        """POSTION計測"""
+        def_name = def_info['name']
+        def_idx = def_info['index']
+        current_pole = None
+        for pi, tp in enumerate(POSITION_TEST_POINTS):
+            if self._stop_event.is_set():
+                break
+            self._update_queue.put(('progress', f"{def_name} / POSTION / {tp.part} {tp.display_code}"))
+
+            pole = "p" if tp.part == "POS" else "n"
+            self._datagen_send(f"alt a {tp.address_code} ci {pole}")
+            time.sleep(settle)
+
+            if tp.part != current_pole:
+                ch = def_info['pos_channel'] if tp.part == "POS" else def_info['neg_channel']
+                self._switch_scanner(self._ch_addr(ch), switch_delay)
+                current_pole = tp.part
+
+            voltage = self._measure_voltage()
+
+            if voltage is not None:
+                error = voltage - tp.expected
+                error_pct = (error / tp.expected * 100) if tp.expected != 0 else 0
+                judge = "OK" if abs(error) <= tp.tolerance else "NG"
+            else:
+                error, error_pct, judge = None, None, "NG"
+
+            self._results[def_idx]['position'].append({
+                'part': tp.part, 'code': tp.display_code,
+                'voltage': voltage, 'expected_str': POSITION_EXPECTED_STRINGS[pi],
+                'error': error, 'error_pct': error_pct, 'judge': judge,
+            })
+
+            v_str = f"{voltage:.6f}" if voltage is not None else "---"
+            e_str = f"{error:.6f}" if error is not None else "---"
+            self._update_queue.put(('row', (
+                def_name, tp.part, tp.display_code, v_str,
+                POSITION_EXPECTED_STRINGS[pi], e_str, judge
+            )))
+
+    def _run_lbc_test(self, def_info, settle, switch_delay):
+        """LBC計測"""
+        def_name = def_info['name']
+        def_idx = def_info['index']
+        for li, tp in enumerate(LBC_TEST_POINTS):
+            if self._stop_event.is_set():
+                break
+            self._update_queue.put(('progress', f"{def_name} / LBC / ATT{tp.att} {tp.display_code}"))
+
+            self._datagen_send(f"alt a {tp.address_code} cii p")
+            time.sleep(settle)
+
+            # POS計測
+            self._switch_scanner(self._ch_addr(def_info['pos_channel']), switch_delay)
+            voltage_pos = self._measure_voltage()
+
+            # NEG計測
+            self._switch_scanner(self._ch_addr(def_info['neg_channel']), switch_delay)
+            voltage_neg = self._measure_voltage()
+
+            if voltage_pos is not None and voltage_neg is not None:
+                error_pos = voltage_pos - tp.expected_pos
+                error_neg = voltage_neg - tp.expected_neg
+                judge = "OK" if abs(error_pos) <= tp.tolerance and abs(error_neg) <= tp.tolerance else "NG"
+            else:
+                error_pos, error_neg, judge = None, None, "NG"
+
+            self._results[def_idx]['lbc'].append({
+                'att': tp.att, 'code': tp.display_code,
+                'voltage_pos': voltage_pos, 'voltage_neg': voltage_neg,
+                'expected_str': LBC_EXPECTED_STRINGS[li],
+                'error_pos': error_pos, 'error_neg': error_neg, 'judge': judge,
+            })
+
+            vp = f"{voltage_pos:.6f}" if voltage_pos is not None else "---"
+            vn = f"{voltage_neg:.6f}" if voltage_neg is not None else "---"
+            ep = f"{error_pos:.6f}" if error_pos is not None else "---"
+            self._update_queue.put(('row', (
+                def_name, f"ATT{tp.att}", tp.display_code,
+                f"P:{vp} N:{vn}", LBC_EXPECTED_STRINGS[li], f"P:{ep}", judge
+            )))
+
+    def _run_moni_test(self, def_info, settle, switch_delay):
+        """moni計測"""
+        def_name = def_info['name']
+        def_idx = def_info['index']
+        current_pole = None
+        for mi, tp in enumerate(MONI_TEST_POINTS):
+            if self._stop_event.is_set():
+                break
+            self._update_queue.put(('progress', f"{def_name} / moni / {tp.part} {tp.display_code}"))
+
+            pole = "p" if tp.part == "POS" else "n"
+            self._datagen_send(f"alt a {tp.address_code} ci {pole}")
+            time.sleep(settle)
+
+            if tp.part != current_pole:
+                ch = def_info['pos_channel'] if tp.part == "POS" else def_info['neg_channel']
+                self._switch_scanner(self._ch_addr(ch), switch_delay)
+                current_pole = tp.part
+
+            voltage = self._measure_voltage()
+
+            if voltage is not None:
+                error = voltage - tp.expected
+                error_pct = (error / tp.expected * 100) if tp.expected != 0 else 0
+                judge = "OK" if abs(error) <= tp.tolerance else "NG"
+            else:
+                error, error_pct, judge = None, None, "NG"
+
+            self._results[def_idx]['moni'].append({
+                'part': tp.part, 'code': tp.display_code,
+                'voltage': voltage, 'expected_str': MONI_EXPECTED_STRINGS[mi],
+                'error': error, 'error_pct': error_pct, 'judge': judge,
+            })
+
+            v_str = f"{voltage:.6f}" if voltage is not None else "---"
+            e_str = f"{error:.6f}" if error is not None else "---"
+            self._update_queue.put(('row', (
+                def_name, tp.part, tp.display_code, v_str,
+                MONI_EXPECTED_STRINGS[mi], e_str, judge
+            )))
+
+    # ==================== 表示順リオーダー ====================
+    def _reorder_for_display(self, data, order):
+        """計測順の結果リストをExcel表示順に並べ替え"""
+        return [data[i] for i in order]
+
     # ==================== XLSX保存 ====================
     def _save_xlsx(self, results, save_dir, serial_no, timestamp):
         wb = openpyxl.Workbook()
 
+        # 計測順→Excel表示順にリオーダー
+        pos_display = self._reorder_for_display(results['position'], POSITION_DISPLAY_ORDER)
+        moni_display = self._reorder_for_display(results['moni'], MONI_DISPLAY_ORDER)
+
         # POSTION sheet
         ws = wb.active
         ws.title = "POSTION"
-        self._write_position_sheet(ws, results['position'], serial_no)
+        self._write_position_sheet(ws, pos_display, serial_no)
 
-        # LBC sheet
+        # LBC sheet (計測順=表示順なのでそのまま)
         ws_lbc = wb.create_sheet("LBC")
         self._write_lbc_sheet(ws_lbc, results['lbc'], serial_no)
 
         # moni sheet
         ws_moni = wb.create_sheet("moni")
-        self._write_moni_sheet(ws_moni, results['moni'], serial_no)
+        self._write_moni_sheet(ws_moni, moni_display, serial_no)
 
         filepath = os.path.join(save_dir, f"{serial_no}_DC特性_{timestamp}.xlsx")
         wb.save(filepath)

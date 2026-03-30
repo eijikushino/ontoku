@@ -2,6 +2,22 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.53] - 2026-03-30
+### 改善
+- DC特性: 試験種別をPosition/LBC/moniから排他選択に変更
+- DC特性: 結果サマリーに計測電圧・期待値・誤差を7列で表示
+- DC特性: 実行制御を右パネル上部に移動、保存先パスを広く表示
+- DC特性: スキャナ切替をPattern Testと同じcpon方式に統一
+- DC特性: スキャナ切替はPOS↔NEG時のみ実行（同一極性内は省略）
+- DC特性: CHアドレス生成を修正（CH01→@101形式）
+- DC特性: 計測順序をPOS/NEGともにFFFFF→80000→00000に統一（Excel表示順は維持）
+### 変更
+- DC特性: DMMレンジをPosition=1000V固定、LBC/moni=AUTO切替に変更
+- DC特性: NPLC=10に設定
+- DC特性: スキャナ切替時間をPattern Testの設定値と共有（読取専用表示）
+### 修正
+- DC特性: GPIBController属性名をis_connected→connectedに修正
+
 ## [1.52] - 2026-03-27
 ### 追加
 - DC特性タブ（POSTION/LBC/moni自動計測、XLSX保存、matplotlib PNG出力）

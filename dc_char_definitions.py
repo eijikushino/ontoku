@@ -13,24 +13,28 @@ class PositionTestPoint:
     tolerance: float    # 許容誤差 (V)
 
 
-# POSTION: 1デバイスあたり6ポイント（POS 3点 + NEG 3点）
+# POSTION: 計測順序（POS/NEGともにFFFFF→80000→00000）
 POSITION_TEST_POINTS: List[PositionTestPoint] = [
-    PositionTestPoint("POS", "FFFFF", "FFFFF H", +160.000, 0.160),
-    PositionTestPoint("POS", "80000", "80000 H",    0.000, 0.100),
-    PositionTestPoint("POS", "00000", "00000 H", -160.000, 0.160),
-    PositionTestPoint("NEG", "00000", "00000 H", +160.000, 0.160),
-    PositionTestPoint("NEG", "80000", "80000 H",    0.000, 0.100),
-    PositionTestPoint("NEG", "FFFFF", "FFFFF H", -160.000, 0.160),
+    PositionTestPoint("POS", "FFFFF", "FFFFF H", +160.000, 0.160),  # [0]
+    PositionTestPoint("POS", "80000", "80000 H",    0.000, 0.100),  # [1]
+    PositionTestPoint("POS", "00000", "00000 H", -160.000, 0.160),  # [2]
+    PositionTestPoint("NEG", "FFFFF", "FFFFF H", -160.000, 0.160),  # [3]
+    PositionTestPoint("NEG", "80000", "80000 H",    0.000, 0.100),  # [4]
+    PositionTestPoint("NEG", "00000", "00000 H", +160.000, 0.160),  # [5]
 ]
 
-# 期待値文字列（テンプレート表示用）
+# Excel表示順序（参照Excelフォーマット: NEGは00000→80000→FFFFF）
+# 計測結果index → Excel行順: [0,1,2, 5,4,3]
+POSITION_DISPLAY_ORDER = [0, 1, 2, 5, 4, 3]
+
+# 期待値文字列（Excel表示順）
 POSITION_EXPECTED_STRINGS = [
-    "160.000±0.160",
-    "0.000±0.100",
-    "-160.000±0.160",
-    "160.000±0.160",
-    "0.000±0.100",
-    "-160.000±0.160",
+    "160.000±0.160",    # POS FFFFF
+    "0.000±0.100",      # POS 80000
+    "-160.000±0.160",   # POS 00000
+    "160.000±0.160",    # NEG 00000
+    "0.000±0.100",      # NEG 80000
+    "-160.000±0.160",   # NEG FFFFF
 ]
 
 
@@ -76,20 +80,24 @@ class MoniTestPoint:
     tolerance: float    # 許容誤差 (V)
 
 
-# moni: 1デバイスあたり4ポイント（POS 2点 + NEG 2点）
+# moni: 計測順序（POS/NEGともにFFFFF→00000）
 MONI_TEST_POINTS: List[MoniTestPoint] = [
-    MoniTestPoint("POS", "FFFFF", "FFFFF H", +5.00, 0.05),
-    MoniTestPoint("POS", "00000", "00000 H", -5.00, 0.05),
-    MoniTestPoint("NEG", "00000", "00000 H", +5.00, 0.05),
-    MoniTestPoint("NEG", "FFFFF", "FFFFF H", -5.00, 0.05),
+    MoniTestPoint("POS", "FFFFF", "FFFFF H", +5.00, 0.05),  # [0]
+    MoniTestPoint("POS", "00000", "00000 H", -5.00, 0.05),   # [1]
+    MoniTestPoint("NEG", "FFFFF", "FFFFF H", -5.00, 0.05),   # [2]
+    MoniTestPoint("NEG", "00000", "00000 H", +5.00, 0.05),   # [3]
 ]
 
-# 期待値文字列（テンプレート表示用）
+# Excel表示順序（参照Excelフォーマット: NEGは00000→FFFFF）
+# 計測結果index → Excel行順: [0,1, 3,2]
+MONI_DISPLAY_ORDER = [0, 1, 3, 2]
+
+# 期待値文字列（Excel表示順）
 MONI_EXPECTED_STRINGS = [
-    "+5.00±0.05",
-    "-5.00±0.05",
-    "+5.00±0.05",
-    "-5.00±0.05",
+    "+5.00±0.05",   # POS FFFFF
+    "-5.00±0.05",   # POS 00000
+    "+5.00±0.05",   # NEG 00000
+    "-5.00±0.05",   # NEG FFFFF
 ]
 
 # DMM レンジ設定
