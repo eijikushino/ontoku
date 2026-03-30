@@ -10,15 +10,10 @@ from datetime import datetime
 
 import openpyxl
 from openpyxl.styles import Font, Border, Side, Alignment, PatternFill
-import matplotlib
-matplotlib.use('Agg')
-import matplotlib.pyplot as plt
-
 from dc_char_definitions import (
-    POSITION_TEST_POINTS, POSITION_EXPECTED_STRINGS, POSITION_DISPLAY_ORDER,
-    LBC_TEST_POINTS, LBC_EXPECTED_STRINGS,
-    MONI_TEST_POINTS, MONI_EXPECTED_STRINGS, MONI_DISPLAY_ORDER,
-    DMM_RANGE_POSITION, DMM_RANGE_LBC, DMM_RANGE_MONI,
+    POSITION_TEST_POINTS, POSITION_DISPLAY_ORDER,
+    LBC_TEST_POINTS,
+    MONI_TEST_POINTS, MONI_DISPLAY_ORDER,
 )
 
 
@@ -163,31 +158,36 @@ class DCCharTab(ttk.Frame):
 
         save_row = ttk.Frame(ctrl_frame)
         save_row.pack(fill="x", pady=2)
-        ttk.Label(save_row, text="保存先:").pack(side="left")
+        self.var_save_enabled = tk.BooleanVar(value=False)
+        ttk.Checkbutton(save_row, text="Excel&PNG保存",
+                        variable=self.var_save_enabled).pack(side="left")
+        ttk.Label(save_row, text="保存先:").pack(side="left", padx=(10, 0))
         ttk.Entry(save_row, textvariable=self.save_dir).pack(side="left", fill="x", expand=True, padx=2)
         ttk.Button(save_row, text="参照", width=4,
                    command=self._browse_save_dir).pack(side="left")
 
-        # 結果サマリー（測定電圧表示）
+        # 結果サマリー（Excelと同じ列順）
         result_frame = ttk.LabelFrame(right, text="結果サマリー", padding=5)
         result_frame.pack(fill="both", expand=True, padx=5, pady=2)
 
-        columns = ('def_name', 'part', 'code', 'voltage', 'expected', 'error', 'judge')
+        columns = ('def_name', 'part', 'code', 'voltage', 'expected', 'error', 'error_pct', 'judge')
         self.tree = ttk.Treeview(result_frame, columns=columns, show='headings', height=18)
-        self.tree.heading('def_name', text='DEF')
-        self.tree.heading('part', text='部')
-        self.tree.heading('code', text='ｺｰﾄﾞ')
-        self.tree.heading('voltage', text='計測値(V)')
-        self.tree.heading('expected', text='期待値')
+        self.tree.heading('def_name', text='ﾕﾆｯﾄNo.')
+        self.tree.heading('part', text='極')
+        self.tree.heading('code', text='入力ｺｰﾄﾞ')
+        self.tree.heading('voltage', text='測定電圧(V)')
+        self.tree.heading('expected', text='許容誤差(V)')
         self.tree.heading('error', text='誤差(V)')
-        self.tree.heading('judge', text='結果')
+        self.tree.heading('error_pct', text='誤差(%)')
+        self.tree.heading('judge', text='判定')
         self.tree.column('def_name', width=55, anchor='center')
-        self.tree.column('part', width=40, anchor='center')
-        self.tree.column('code', width=65, anchor='center')
-        self.tree.column('voltage', width=120, anchor='e')
-        self.tree.column('expected', width=120, anchor='center')
-        self.tree.column('error', width=110, anchor='e')
-        self.tree.column('judge', width=40, anchor='center')
+        self.tree.column('part', width=35, anchor='center')
+        self.tree.column('code', width=65, anchor='e')
+        self.tree.column('voltage', width=100, anchor='e')
+        self.tree.column('expected', width=130, anchor='e')
+        self.tree.column('error', width=80, anchor='e')
+        self.tree.column('error_pct', width=70, anchor='e')
+        self.tree.column('judge', width=35, anchor='center')
         self.tree.tag_configure('ok', background='#d5f5e3')
         self.tree.tag_configure('ng', background='#f5b7b1')
 
@@ -218,10 +218,6 @@ class DCCharTab(ttk.Frame):
         if not self.datagen or not self.datagen.is_connected():
             messagebox.showerror("エラー", "DataGenが未接続です")
             return
-
-        # 保存先ディレクトリ作成
-        save_dir = self.save_dir.get()
-        os.makedirs(save_dir, exist_ok=True)
 
         # 初期化
         self.is_running = True
@@ -318,8 +314,11 @@ class DCCharTab(ttk.Frame):
             # cponで全チャンネルOPEN
             self.gpib_scanner.write(f":system:cpon {self.scanner_slot}")
             time.sleep(switch_delay / 2)
-            # *OPC?でcpon完了を確認
-            self.gpib_scanner.query("*OPC?")
+            # *OPC?でcpon完了を確認（警告抑制: queryではなくwrite+read_stb方式）
+            import warnings
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                self.gpib_scanner.query("*OPC?")
             # 対象CHをCLOSE
             self.gpib_scanner.write(f"CLOSE ({channel_addr})")
             time.sleep(switch_delay / 2)
@@ -328,10 +327,10 @@ class DCCharTab(ttk.Frame):
 
     def _measure_voltage(self):
         orig_timeout = self.gpib_dmm.instrument.timeout
-        self.gpib_dmm.instrument.timeout = 5000
+        self.gpib_dmm.instrument.timeout = 3000
         try:
             success, response = self.gpib_dmm.query("TRIG SGL")
-            if success:
+            if success and response:
                 return float(response.strip())
         except Exception:
             pass
@@ -361,11 +360,9 @@ class DCCharTab(ttk.Frame):
             self._datagen_send("func alt")
             self._datagen_send("alt s sa")
 
-            # DMM設定: NPLC 10
+            # DMM設定: NPLC 10 + レンジ設定
             self.gpib_dmm.write("NPLC 10")
             time.sleep(0.1)
-
-            # DMMレンジ設定
             if test_type == "Position":
                 self.gpib_dmm.write("DCV 1000")
             else:
@@ -389,38 +386,52 @@ class DCCharTab(ttk.Frame):
                 else:  # moni
                     self._run_moni_test(def_info, settle, switch_delay)
 
-            # 後片付け
+            # 後片付け: コードをcenterに戻す
             self._scanner_cpon()
+            self._datagen_send("alt a 80000 ci p")
+            self._datagen_send("alt a 80000 ci n")
+            self._datagen_send("alt a 80000 cii p")
+            self._datagen_send("alt a 80000 cii n")
             self._datagen_send("alt s sa")
 
             if self._stop_event.is_set():
                 self._update_queue.put(('done', "計測を中断しました"))
                 return
 
-            # 保存
+            # 保存（チェックON時のみ）
+            if not self.var_save_enabled.get():
+                self._update_queue.put(('done', "計測完了（保存なし）"))
+                return
+
             save_dir = self.save_dir.get()
+            os.makedirs(save_dir, exist_ok=True)
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             saved_files = []
 
+            sheet_key = test_type.lower()
             for def_idx, results in self._results.items():
                 sn = self._get_serial_number(def_idx)
+                data = results[sheet_key]
+                if not data:
+                    continue
+
+                # Excel表示順にリオーダー
+                if sheet_key == 'position':
+                    display_data = self._reorder_for_display(data, POSITION_DISPLAY_ORDER)
+                elif sheet_key == 'moni':
+                    display_data = self._reorder_for_display(data, MONI_DISPLAY_ORDER)
+                else:
+                    display_data = data
 
                 # XLSX保存
-                xlsx_path = self._save_xlsx(results, save_dir, sn, timestamp)
+                xlsx_path = self._save_xlsx_single(sheet_key, display_data, save_dir, sn, timestamp)
                 saved_files.append(xlsx_path)
 
-                # PNG保存（計測順→Excel表示順にリオーダー）
-                sheet_name = test_type.lower()
-                if sheet_name == 'position':
-                    display_data = self._reorder_for_display(results['position'], POSITION_DISPLAY_ORDER)
-                elif sheet_name == 'moni':
-                    display_data = self._reorder_for_display(results['moni'], MONI_DISPLAY_ORDER)
-                else:
-                    display_data = results['lbc']
-                png_path = self._generate_table_png(sheet_name, display_data, save_dir, sn, timestamp)
+                # PNG保存（Excel COMでスクリーンショット）
+                png_path = self._generate_table_png(sheet_key, display_data, save_dir, sn, timestamp)
                 saved_files.append(png_path)
 
-            msg = f"保存完了:\n" + "\n".join(saved_files)
+            msg = "保存完了:\n" + "\n".join(saved_files)
             self._update_queue.put(('done', msg))
 
         except Exception as e:
@@ -456,15 +467,17 @@ class DCCharTab(ttk.Frame):
 
             self._results[def_idx]['position'].append({
                 'part': tp.part, 'code': tp.display_code,
-                'voltage': voltage, 'expected_str': POSITION_EXPECTED_STRINGS[pi],
+                'voltage': voltage, 'expected_str': tp.expected_str,
                 'error': error, 'error_pct': error_pct, 'judge': judge,
             })
 
-            v_str = f"{voltage:.6f}" if voltage is not None else "---"
-            e_str = f"{error:.6f}" if error is not None else "---"
+            v_str = f"{voltage:.3f}" if voltage is not None else "---"
+            e_str = f"{error:.3f}" if error is not None else "---"
+            is_center = '80000' in tp.display_code
+            ep_str = "" if is_center else (f"{error_pct:.3f}" if error_pct is not None else "---")
             self._update_queue.put(('row', (
                 def_name, tp.part, tp.display_code, v_str,
-                POSITION_EXPECTED_STRINGS[pi], e_str, judge
+                tp.expected_str, e_str, ep_str, judge
             )))
 
     def _run_lbc_test(self, def_info, settle, switch_delay):
@@ -497,16 +510,17 @@ class DCCharTab(ttk.Frame):
             self._results[def_idx]['lbc'].append({
                 'att': tp.att, 'code': tp.display_code,
                 'voltage_pos': voltage_pos, 'voltage_neg': voltage_neg,
-                'expected_str': LBC_EXPECTED_STRINGS[li],
+                'expected_str': tp.expected_str,
                 'error_pos': error_pos, 'error_neg': error_neg, 'judge': judge,
             })
 
-            vp = f"{voltage_pos:.6f}" if voltage_pos is not None else "---"
-            vn = f"{voltage_neg:.6f}" if voltage_neg is not None else "---"
-            ep = f"{error_pos:.6f}" if error_pos is not None else "---"
+            vp = f"{voltage_pos:.3f}" if voltage_pos is not None else "---"
+            vn = f"{voltage_neg:.3f}" if voltage_neg is not None else "---"
+            ep = f"{error_pos:.3f}" if error_pos is not None else "---"
+            en = f"{error_neg:.3f}" if error_neg is not None else "---"
             self._update_queue.put(('row', (
                 def_name, f"ATT{tp.att}", tp.display_code,
-                f"P:{vp} N:{vn}", LBC_EXPECTED_STRINGS[li], f"P:{ep}", judge
+                f"P:{vp} N:{vn}", tp.expected_str, f"P:{ep} N:{en}", "", judge
             )))
 
     def _run_moni_test(self, def_info, settle, switch_delay):
@@ -539,15 +553,16 @@ class DCCharTab(ttk.Frame):
 
             self._results[def_idx]['moni'].append({
                 'part': tp.part, 'code': tp.display_code,
-                'voltage': voltage, 'expected_str': MONI_EXPECTED_STRINGS[mi],
+                'voltage': voltage, 'expected_str': tp.expected_str,
                 'error': error, 'error_pct': error_pct, 'judge': judge,
             })
 
-            v_str = f"{voltage:.6f}" if voltage is not None else "---"
-            e_str = f"{error:.6f}" if error is not None else "---"
+            v_str = f"{voltage:.3f}" if voltage is not None else "---"
+            e_str = f"{error:.3f}" if error is not None else "---"
+            ep_str = f"{error_pct:.3f}" if error_pct is not None else "---"
             self._update_queue.put(('row', (
                 def_name, tp.part, tp.display_code, v_str,
-                MONI_EXPECTED_STRINGS[mi], e_str, judge
+                tp.expected_str, e_str, ep_str, judge
             )))
 
     # ==================== 表示順リオーダー ====================
@@ -556,80 +571,129 @@ class DCCharTab(ttk.Frame):
         return [data[i] for i in order]
 
     # ==================== XLSX保存 ====================
-    def _save_xlsx(self, results, save_dir, serial_no, timestamp):
+    def _save_xlsx_single(self, sheet_key, display_data, save_dir, serial_no, timestamp):
+        """選択種別のシートのみXLSX保存"""
         wb = openpyxl.Workbook()
-
-        # 計測順→Excel表示順にリオーダー
-        pos_display = self._reorder_for_display(results['position'], POSITION_DISPLAY_ORDER)
-        moni_display = self._reorder_for_display(results['moni'], MONI_DISPLAY_ORDER)
-
-        # POSTION sheet
         ws = wb.active
-        ws.title = "POSTION"
-        self._write_position_sheet(ws, pos_display, serial_no)
 
-        # LBC sheet (計測順=表示順なのでそのまま)
-        ws_lbc = wb.create_sheet("LBC")
-        self._write_lbc_sheet(ws_lbc, results['lbc'], serial_no)
+        sheet_titles = {'position': 'POSTION', 'lbc': 'LBC', 'moni': 'moni'}
+        ws.title = sheet_titles.get(sheet_key, sheet_key)
 
-        # moni sheet
-        ws_moni = wb.create_sheet("moni")
-        self._write_moni_sheet(ws_moni, moni_display, serial_no)
+        if sheet_key == 'position':
+            self._write_position_sheet(ws, display_data, serial_no)
+        elif sheet_key == 'lbc':
+            self._write_lbc_sheet(ws, display_data, serial_no)
+        else:
+            self._write_moni_sheet(ws, display_data, serial_no)
 
-        filepath = os.path.join(save_dir, f"{serial_no}_DC特性_{timestamp}.xlsx")
+        filepath = os.path.join(save_dir, f"{serial_no}_DC特性_{ws.title}_{timestamp}.xlsx")
         wb.save(filepath)
         return filepath
 
     def _write_position_sheet(self, ws, data, serial_no):
+        """Position XLSX書き込み（docx仕様: 4DEF固定枠、セル結合、右寄せ、数式埋込）"""
         thin = Side(style='thin')
+        thick = Side(style='medium')
         border_all = Border(top=thin, left=thin, right=thin, bottom=thin)
-        hdr_font = Font(name='MS Pゴシック', size=9, bold=True)
-        dat_font = Font(name='MS Pゴシック', size=9)
-        center = Alignment(horizontal='center', vertical='center')
-        hdr_fill = PatternFill(start_color='D4E6F1', end_color='D4E6F1', fill_type='solid')
-        ok_fill = PatternFill(start_color='D5F5E3', end_color='D5F5E3', fill_type='solid')
-        ng_fill = PatternFill(start_color='F5B7B1', end_color='F5B7B1', fill_type='solid')
+        border_top_thick = Border(top=thick, left=thin, right=thin, bottom=thin)
+        dat_font = Font(name='MS Pゴシック', size=10)
+        center = Alignment(horizontal='center', vertical='center', wrap_text=True)
+        right_align = Alignment(horizontal='right', vertical='center')
+        gray_fill = PatternFill(start_color='D9D9D9', end_color='D9D9D9', fill_type='solid')
 
-        headers = ['', 'ﾕﾆｯﾄNo.', '部', '入力ｺｰﾄﾞ', '出力電圧 (V)', '期待値±誤差 (V)', '誤差 (V)', '誤差(%)', '結果']
+        # ヘッダー（太字なし）
+        headers = ['ﾕﾆｯﾄ No.', '極', '入力ｺｰﾄﾞ', '測定電圧(V)', '許容誤差(V)(<0.1%)', '誤差(V)', '誤差(%)', '判定']
         for c, h in enumerate(headers, 1):
             cell = ws.cell(row=1, column=c, value=h)
-            cell.font = hdr_font
-            cell.alignment = center
-            cell.border = border_all
-            cell.fill = hdr_fill
+            cell.font = dat_font; cell.alignment = center; cell.border = border_all
 
-        for i, d in enumerate(data):
-            r = i + 2
-            ws.cell(row=r, column=1, value='').border = border_all
-            ws.cell(row=r, column=2, value=serial_no if i == 0 else '').font = dat_font
-            ws.cell(row=r, column=2).border = border_all
-            ws.cell(row=r, column=2).alignment = center
-            ws.cell(row=r, column=3, value=d['part']).font = dat_font
-            ws.cell(row=r, column=3).border = border_all
-            ws.cell(row=r, column=3).alignment = center
-            ws.cell(row=r, column=4, value=d['code']).font = dat_font
-            ws.cell(row=r, column=4).border = border_all
-            ws.cell(row=r, column=4).alignment = center
-            ws.cell(row=r, column=5, value=d['voltage']).font = dat_font
-            ws.cell(row=r, column=5).border = border_all
-            ws.cell(row=r, column=5).number_format = '0.000000'
-            ws.cell(row=r, column=6, value=d['expected_str']).font = dat_font
-            ws.cell(row=r, column=6).border = border_all
-            ws.cell(row=r, column=6).alignment = center
-            ws.cell(row=r, column=7, value=d['error']).font = dat_font
-            ws.cell(row=r, column=7).border = border_all
-            ws.cell(row=r, column=7).number_format = '0.000000'
-            pct = d.get('error_pct')
-            ws.cell(row=r, column=8, value=pct if pct else '').font = dat_font
-            ws.cell(row=r, column=8).border = border_all
-            ws.cell(row=r, column=8).number_format = '0.000000'
-            jcell = ws.cell(row=r, column=9, value=d['judge'])
-            jcell.font = dat_font
-            jcell.border = border_all
-            jcell.alignment = center
-            jcell.fill = ok_fill if d['judge'] == 'OK' else ng_fill
+        expected_strs = [
+            "160.000±0.160", "0.000±0.100", "-160.000±0.160",
+            "160.000±0.160", "0.000±0.100", "-160.000±0.160",
+        ]
+        # 期待値数値（数式用）
+        expected_vals = [160.0, 0.0, -160.0, 160.0, 0.0, -160.0]
+        code_strs = ["FFFFF H", "80000 H", "00000 H", "00000 H", "80000 H", "FFFFF H"]
 
-        for c, w in {1: 4, 2: 14, 3: 6, 4: 12, 5: 18, 6: 18, 7: 18, 8: 14, 9: 8}.items():
+        for slot in range(4):
+            base = 2 + slot * 6
+            if slot == 0 and data:
+                slot_data = data
+                unit_label = f"1PB397MK2\n{serial_no}"
+            else:
+                slot_data = None
+                unit_label = ""
+
+            for ri in range(6):
+                r = base + ri
+                is_center = (ri == 1 or ri == 4)
+                bdr = border_top_thick if ri == 0 else border_all
+
+                if slot_data and ri < len(slot_data):
+                    d = slot_data[ri]
+                    v = d['voltage'] if d['voltage'] is not None else ''
+                    judge = d['judge']
+                else:
+                    v, judge = '', ''
+
+                # 入力ｺｰﾄﾞ（右寄せ）
+                c3 = ws.cell(row=r, column=3, value=code_strs[ri])
+                c3.font = dat_font; c3.alignment = right_align; c3.border = bdr
+                # 測定電圧（右寄せ）
+                c4 = ws.cell(row=r, column=4, value=v)
+                c4.font = dat_font; c4.alignment = right_align; c4.border = bdr
+                if v != '': c4.number_format = '0.000'
+                # 許容誤差（右寄せ）
+                c5 = ws.cell(row=r, column=5, value=expected_strs[ri])
+                c5.font = dat_font; c5.alignment = right_align; c5.border = bdr
+                # 誤差V = 測定電圧 - 期待値（数式）
+                exp_v = expected_vals[ri]
+                if v != '':
+                    c6 = ws.cell(row=r, column=6, value=f'=D{r}-({exp_v})')
+                else:
+                    c6 = ws.cell(row=r, column=6, value='')
+                c6.font = dat_font; c6.alignment = right_align; c6.border = bdr
+                c6.number_format = '0.000'
+                # 誤差% = 誤差V / 期待値 * 100（数式、centerはグレー空欄）
+                c7 = ws.cell(row=r, column=7)
+                if is_center:
+                    c7.value = ''
+                    c7.fill = gray_fill
+                elif v != '' and exp_v != 0:
+                    c7.value = f'=F{r}/{exp_v}*100'
+                    c7.number_format = '0.000'
+                else:
+                    c7.value = ''
+                c7.font = dat_font; c7.alignment = right_align; c7.border = bdr
+                # 判定（中央）
+                c8 = ws.cell(row=r, column=8, value=judge)
+                c8.font = dat_font; c8.alignment = center; c8.border = bdr
+
+            # ﾕﾆｯﾄNo: 6行結合
+            ws.merge_cells(start_row=base, start_column=1, end_row=base + 5, end_column=1)
+            c1 = ws.cell(row=base, column=1, value=unit_label)
+            c1.font = dat_font; c1.alignment = center
+            for ri in range(6):
+                ws.cell(row=base + ri, column=1).border = border_top_thick if ri == 0 else border_all
+
+            # 極POS: 3行結合
+            ws.merge_cells(start_row=base, start_column=2, end_row=base + 2, end_column=2)
+            ws.cell(row=base, column=2, value='POS').font = dat_font
+            ws.cell(row=base, column=2).alignment = center
+            for ri in range(3):
+                ws.cell(row=base + ri, column=2).border = border_top_thick if ri == 0 else border_all
+
+            # 極NEG: 3行結合
+            ws.merge_cells(start_row=base + 3, start_column=2, end_row=base + 5, end_column=2)
+            ws.cell(row=base + 3, column=2, value='NEG').font = dat_font
+            ws.cell(row=base + 3, column=2).alignment = center
+            for ri in range(3, 6):
+                ws.cell(row=base + ri, column=2).border = border_all
+
+        # 行高さ16、列幅
+        for r in range(1, 26 + 1):
+            ws.row_dimensions[r].height = 16
+        for c, w in {1: 14, 2: 6, 3: 12, 4: 14, 5: 22, 6: 10, 7: 10, 8: 6}.items():
             ws.column_dimensions[openpyxl.utils.get_column_letter(c)].width = w
 
     def _write_lbc_sheet(self, ws, data, serial_no):
@@ -740,77 +804,54 @@ class DCCharTab(ttk.Frame):
         for c, w in {1: 4, 2: 14, 3: 6, 4: 12, 5: 18, 6: 18, 7: 18, 8: 14, 9: 8}.items():
             ws.column_dimensions[openpyxl.utils.get_column_letter(c)].width = w
 
-    # ==================== PNG生成 ====================
+    # ==================== PNG生成（Excel COM経由スクリーンショット） ====================
     def _generate_table_png(self, sheet_name, data, save_dir, serial_no, timestamp):
-        # 日本語フォント設定
-        plt.rcParams['font.family'] = 'MS Gothic'
+        """XLSXを開いて表範囲をCopyPicture→PNG保存"""
+        sheet_titles = {'position': 'POSTION', 'lbc': 'LBC', 'moni': 'moni'}
+        sheet_upper = sheet_titles.get(sheet_name, sheet_name)
+        xlsx_path = os.path.join(save_dir, f"{serial_no}_DC特性_{sheet_upper}_{timestamp}.xlsx")
+        png_path = os.path.join(save_dir, f"{serial_no}_DC特性_{sheet_upper}_{timestamp}.png")
 
-        if sheet_name == 'position':
-            title = "DC特性 - POSTION"
-            headers = ['部', '入力ｺｰﾄﾞ', '出力電圧(V)', '期待値±誤差(V)', '誤差(V)', '誤差(%)', '結果']
-            rows = []
-            for d in data:
-                v = f"{d['voltage']:.6f}" if d['voltage'] is not None else ""
-                e = f"{d['error']:.6f}" if d['error'] is not None else ""
-                ep = f"{d['error_pct']:.6f}" if d.get('error_pct') is not None else ""
-                rows.append([d['part'], d['code'], v, d['expected_str'], e, ep, d['judge']])
-        elif sheet_name == 'lbc':
-            title = "DC特性 - LBC"
-            headers = ['ATT', '入力ｺｰﾄﾞ', 'POS電圧(V)', 'NEG電圧(V)', '期待値(V)', 'POS誤差(V)', 'NEG誤差(V)', '結果']
-            rows = []
-            for d in data:
-                vp = f"{d['voltage_pos']:.6f}" if d['voltage_pos'] is not None else ""
-                vn = f"{d['voltage_neg']:.6f}" if d['voltage_neg'] is not None else ""
-                ep = f"{d['error_pos']:.6f}" if d['error_pos'] is not None else ""
-                en = f"{d['error_neg']:.6f}" if d['error_neg'] is not None else ""
-                rows.append([d['att'], d['code'], vp, vn, d['expected_str'], ep, en, d['judge']])
-        else:  # moni
-            title = "DC特性 - moni"
-            headers = ['部', '入力ｺｰﾄﾞ', '出力電圧(V)', '期待値±誤差(V)', '誤差(V)', '誤差(%)', '結果']
-            rows = []
-            for d in data:
-                v = f"{d['voltage']:.6f}" if d['voltage'] is not None else ""
-                e = f"{d['error']:.6f}" if d['error'] is not None else ""
-                ep = f"{d['error_pct']:.6f}" if d.get('error_pct') is not None else ""
-                rows.append([d['part'], d['code'], v, d['expected_str'], e, ep, d['judge']])
+        if not os.path.exists(xlsx_path):
+            return png_path
 
-        # セル色
-        cell_colors = []
-        for row in rows:
-            row_colors = []
-            for cell in row:
-                if cell == 'NG':
-                    row_colors.append('#f5b7b1')
-                elif cell == 'OK':
-                    row_colors.append('#d5f5e3')
-                else:
-                    row_colors.append('white')
-            cell_colors.append(row_colors)
+        try:
+            import win32com.client
+            from PIL import ImageGrab
+            import pythoncom
+            pythoncom.CoInitialize()
 
-        fig_height = max(2, len(rows) * 0.35 + 1.5)
-        fig, ax = plt.subplots(figsize=(12, fig_height))
-        ax.axis('off')
-        ax.set_title(f"{title}  ({serial_no})", fontsize=12, fontweight='bold', pad=20)
+            excel = win32com.client.Dispatch("Excel.Application")
+            excel.Visible = False
+            excel.DisplayAlerts = False
+            try:
+                wb = excel.Workbooks.Open(os.path.abspath(xlsx_path))
+                ws = wb.Sheets(1)
 
-        table = ax.table(
-            cellText=rows,
-            colLabels=headers,
-            cellColours=cell_colors,
-            colColours=['#d4e6f1'] * len(headers),
-            loc='center',
-            cellLoc='center',
-        )
-        table.auto_set_font_size(False)
-        table.set_fontsize(8)
-        table.scale(1.0, 1.4)
+                # 表範囲: A1～最終データ行（ヘッダー1行 + データ行）
+                if sheet_name == 'position':
+                    last_row = 25  # 1 header + 24 data
+                    last_col = 'H'
+                elif sheet_name == 'lbc':
+                    last_row = 1 + len(data)
+                    last_col = 'I'
+                else:  # moni
+                    last_row = 1 + len(data)
+                    last_col = 'H'
 
-        # ヘッダー行を太字に
-        for j in range(len(headers)):
-            table[0, j].set_text_props(fontweight='bold')
+                rng = ws.Range(f"A1:{last_col}{last_row}")
+                rng.CopyPicture(Appearance=1, Format=2)  # xlScreen, xlBitmap
+                import time as _time
+                _time.sleep(0.3)
+                img = ImageGrab.grabclipboard()
+                if img:
+                    img.save(os.path.abspath(png_path))
 
-        fig.tight_layout()
-        sheet_upper = sheet_name.upper() if sheet_name != 'moni' else 'moni'
-        filepath = os.path.join(save_dir, f"{serial_no}_DC特性_{sheet_upper}_{timestamp}.png")
-        fig.savefig(filepath, dpi=150, bbox_inches='tight', pad_inches=0.1)
-        plt.close(fig)
-        return filepath
+                wb.Close(False)
+            finally:
+                excel.Quit()
+                pythoncom.CoUninitialize()
+        except Exception as e:
+            print(f"[DC特性] PNG生成エラー: {e}")
+
+        return png_path

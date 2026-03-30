@@ -2,6 +2,22 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.54] - 2026-03-30
+### 改善
+- DC特性: 結果サマリーに誤差%列を追加（Excel列順と一致する8列構成）
+- DC特性: テンプレートXLSXをセル結合・右寄せ・行高さ16・フォント10ptに修正
+- DC特性: XLSX内の誤差(V)/誤差(%)を数式埋込に変更
+- DC特性: PNG生成をExcel COM経由スクリーンショット方式に変更
+- DC特性: スキャナ*OPC?のpyvisa警告を抑制
+### 追加
+- DC特性: Excel&PNG保存チェックボタン追加（デフォルトOFF）
+### 変更
+- DC特性: ヘッダー名称をdocx仕様に統一（極/測定電圧/許容誤差/判定）
+- DC特性: 期待値文字列をdataclass内に統合（インデックスズレ解消）
+### 修正
+- DC特性: 計測終了時にコードをcenter(80000)に復帰
+- DC特性: list index out of range修正（未選択種別の空リストへのアクセス回避）
+
 ## [1.53] - 2026-03-30
 ### 改善
 - DC特性: 試験種別をPosition/LBC/moniから排他選択に変更
