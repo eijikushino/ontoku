@@ -557,9 +557,9 @@ class DCCharTab(ttk.Frame):
                 'error': error, 'error_pct': error_pct, 'judge': judge,
             })
 
-            v_str = f"{voltage:.3f}" if voltage is not None else "---"
-            e_str = f"{error:.3f}" if error is not None else "---"
-            ep_str = f"{error_pct:.3f}" if error_pct is not None else "---"
+            v_str = f"{voltage:.2f}" if voltage is not None else "---"
+            e_str = f"{error:.2f}" if error is not None else "---"
+            ep_str = f"{error_pct:.2f}" if error_pct is not None else "---"
             self._update_queue.put(('row', (
                 def_name, tp.part, tp.display_code, v_str,
                 tp.expected_str, e_str, ep_str, judge
@@ -572,12 +572,14 @@ class DCCharTab(ttk.Frame):
 
     # ==================== XLSX保存 ====================
     def _save_xlsx_single(self, sheet_key, display_data, save_dir, serial_no, timestamp):
-        """選択種別のシートのみXLSX保存"""
+        """XLSX保存（Position/moniは同一ファイルの別シート、LBCは単独ファイル）"""
+        sheet_titles = {'position': 'POSTION', 'lbc': 'LBC', 'moni': 'moni'}
+        sheet_title = sheet_titles.get(sheet_key, sheet_key)
+        filepath = os.path.join(save_dir, f"{serial_no}_DC特性_{sheet_title}_{timestamp}.xlsx")
+
         wb = openpyxl.Workbook()
         ws = wb.active
-
-        sheet_titles = {'position': 'POSTION', 'lbc': 'LBC', 'moni': 'moni'}
-        ws.title = sheet_titles.get(sheet_key, sheet_key)
+        ws.title = sheet_title
 
         if sheet_key == 'position':
             self._write_position_sheet(ws, display_data, serial_no)
@@ -586,7 +588,6 @@ class DCCharTab(ttk.Frame):
         else:
             self._write_moni_sheet(ws, display_data, serial_no)
 
-        filepath = os.path.join(save_dir, f"{serial_no}_DC特性_{ws.title}_{timestamp}.xlsx")
         wb.save(filepath)
         return filepath
 
@@ -752,65 +753,105 @@ class DCCharTab(ttk.Frame):
             ws.column_dimensions[openpyxl.utils.get_column_letter(c)].width = w
 
     def _write_moni_sheet(self, ws, data, serial_no):
+        """moni XLSX書き込み（docx仕様: 4DEF固定枠、セル結合、右寄せ、数式埋込、小数2桁）"""
         thin = Side(style='thin')
+        thick = Side(style='medium')
         border_all = Border(top=thin, left=thin, right=thin, bottom=thin)
-        hdr_font = Font(name='MS Pゴシック', size=9, bold=True)
-        dat_font = Font(name='MS Pゴシック', size=9)
-        center = Alignment(horizontal='center', vertical='center')
-        hdr_fill = PatternFill(start_color='D4E6F1', end_color='D4E6F1', fill_type='solid')
-        ok_fill = PatternFill(start_color='D5F5E3', end_color='D5F5E3', fill_type='solid')
-        ng_fill = PatternFill(start_color='F5B7B1', end_color='F5B7B1', fill_type='solid')
+        border_top_thick = Border(top=thick, left=thin, right=thin, bottom=thin)
+        dat_font = Font(name='MS Pゴシック', size=10)
+        center = Alignment(horizontal='center', vertical='center', wrap_text=True)
+        right_align = Alignment(horizontal='right', vertical='center')
 
-        headers = ['', 'ﾕﾆｯﾄNo.', '部', '入力ｺｰﾄﾞ', '出力電圧(V)', '期待値±誤差(V)(<1%)',
-                   '誤差(V)', '誤差(%)', '結果']
+        headers = ['ﾕﾆｯﾄ No.', '極', '入力ｺｰﾄﾞ', '測定電圧(V)', '許容誤差(V)(<1%)', '誤差(V)', '誤差(%)', '判定']
         for c, h in enumerate(headers, 1):
             cell = ws.cell(row=1, column=c, value=h)
-            cell.font = hdr_font
-            cell.alignment = center
-            cell.border = border_all
-            cell.fill = hdr_fill
+            cell.font = dat_font; cell.alignment = center; cell.border = border_all
 
-        for i, d in enumerate(data):
-            r = i + 2
-            ws.cell(row=r, column=1, value='').border = border_all
-            ws.cell(row=r, column=2, value=serial_no if i == 0 else '').font = dat_font
-            ws.cell(row=r, column=2).border = border_all
-            ws.cell(row=r, column=2).alignment = center
-            ws.cell(row=r, column=3, value=d['part']).font = dat_font
-            ws.cell(row=r, column=3).border = border_all
-            ws.cell(row=r, column=3).alignment = center
-            ws.cell(row=r, column=4, value=d['code']).font = dat_font
-            ws.cell(row=r, column=4).border = border_all
-            ws.cell(row=r, column=4).alignment = center
-            ws.cell(row=r, column=5, value=d['voltage']).font = dat_font
-            ws.cell(row=r, column=5).border = border_all
-            ws.cell(row=r, column=5).number_format = '0.000000'
-            ws.cell(row=r, column=6, value=d['expected_str']).font = dat_font
-            ws.cell(row=r, column=6).border = border_all
-            ws.cell(row=r, column=6).alignment = center
-            ws.cell(row=r, column=7, value=d['error']).font = dat_font
-            ws.cell(row=r, column=7).border = border_all
-            ws.cell(row=r, column=7).number_format = '0.000000'
-            pct = d.get('error_pct')
-            ws.cell(row=r, column=8, value=pct if pct else '').font = dat_font
-            ws.cell(row=r, column=8).border = border_all
-            ws.cell(row=r, column=8).number_format = '0.000000'
-            jcell = ws.cell(row=r, column=9, value=d['judge'])
-            jcell.font = dat_font
-            jcell.border = border_all
-            jcell.alignment = center
-            jcell.fill = ok_fill if d['judge'] == 'OK' else ng_fill
+        # 表示順: POS FFFFF, POS 00000, NEG 00000, NEG FFFFF
+        expected_strs = ['+5.00±0.05', '-5.00±0.05', '+5.00±0.05', '-5.00±0.05']
+        expected_vals = [5.0, -5.0, 5.0, -5.0]
+        code_strs = ['FFFFF H', '00000 H', '00000 H', 'FFFFF H']
 
-        for c, w in {1: 4, 2: 14, 3: 6, 4: 12, 5: 18, 6: 18, 7: 18, 8: 14, 9: 8}.items():
+        for slot in range(4):
+            base = 2 + slot * 4
+            if slot == 0 and data:
+                slot_data = data
+                unit_label = f"1PB397MK2\n{serial_no}"
+            else:
+                slot_data = None
+                unit_label = ""
+
+            for ri in range(4):
+                r = base + ri
+                bdr = border_top_thick if ri == 0 else border_all
+
+                if slot_data and ri < len(slot_data):
+                    d = slot_data[ri]
+                    v = d['voltage'] if d['voltage'] is not None else ''
+                    judge = d['judge']
+                else:
+                    v, judge = '', ''
+
+                c3 = ws.cell(row=r, column=3, value=code_strs[ri])
+                c3.font = dat_font; c3.alignment = right_align; c3.border = bdr
+                c4 = ws.cell(row=r, column=4, value=v)
+                c4.font = dat_font; c4.alignment = right_align; c4.border = bdr
+                if v != '': c4.number_format = '0.00'
+                c5 = ws.cell(row=r, column=5, value=expected_strs[ri])
+                c5.font = dat_font; c5.alignment = right_align; c5.border = bdr
+                # 誤差V = 測定電圧 - 期待値（数式）
+                exp_v = expected_vals[ri]
+                if v != '':
+                    c6 = ws.cell(row=r, column=6, value=f'=D{r}-({exp_v})')
+                else:
+                    c6 = ws.cell(row=r, column=6, value='')
+                c6.font = dat_font; c6.alignment = right_align; c6.border = bdr
+                c6.number_format = '0.00'
+                # 誤差% = 誤差V / 期待値 * 100
+                c7 = ws.cell(row=r, column=7)
+                if v != '' and exp_v != 0:
+                    c7.value = f'=F{r}/{exp_v}*100'
+                    c7.number_format = '0.00'
+                else:
+                    c7.value = ''
+                c7.font = dat_font; c7.alignment = right_align; c7.border = bdr
+                c8 = ws.cell(row=r, column=8, value=judge)
+                c8.font = dat_font; c8.alignment = center; c8.border = bdr
+
+            # ﾕﾆｯﾄNo: 4行結合
+            ws.merge_cells(start_row=base, start_column=1, end_row=base + 3, end_column=1)
+            c1 = ws.cell(row=base, column=1, value=unit_label)
+            c1.font = dat_font; c1.alignment = center
+            for ri in range(4):
+                ws.cell(row=base + ri, column=1).border = border_top_thick if ri == 0 else border_all
+
+            # 極POS: 2行結合
+            ws.merge_cells(start_row=base, start_column=2, end_row=base + 1, end_column=2)
+            ws.cell(row=base, column=2, value='POS').font = dat_font
+            ws.cell(row=base, column=2).alignment = center
+            for ri in range(2):
+                ws.cell(row=base + ri, column=2).border = border_top_thick if ri == 0 else border_all
+
+            # 極NEG: 2行結合
+            ws.merge_cells(start_row=base + 2, start_column=2, end_row=base + 3, end_column=2)
+            ws.cell(row=base + 2, column=2, value='NEG').font = dat_font
+            ws.cell(row=base + 2, column=2).alignment = center
+            for ri in range(2, 4):
+                ws.cell(row=base + ri, column=2).border = border_all
+
+        for r in range(1, 18):
+            ws.row_dimensions[r].height = 16
+        for c, w in {1: 14, 2: 6, 3: 12, 4: 14, 5: 20, 6: 10, 7: 10, 8: 6}.items():
             ws.column_dimensions[openpyxl.utils.get_column_letter(c)].width = w
 
     # ==================== PNG生成（Excel COM経由スクリーンショット） ====================
     def _generate_table_png(self, sheet_name, data, save_dir, serial_no, timestamp):
         """XLSXを開いて表範囲をCopyPicture→PNG保存"""
         sheet_titles = {'position': 'POSTION', 'lbc': 'LBC', 'moni': 'moni'}
-        sheet_upper = sheet_titles.get(sheet_name, sheet_name)
-        xlsx_path = os.path.join(save_dir, f"{serial_no}_DC特性_{sheet_upper}_{timestamp}.xlsx")
-        png_path = os.path.join(save_dir, f"{serial_no}_DC特性_{sheet_upper}_{timestamp}.png")
+        sheet_title = sheet_titles.get(sheet_name, sheet_name)
+
+        xlsx_path = os.path.join(save_dir, f"{serial_no}_DC特性_{sheet_title}_{timestamp}.xlsx")
+        png_path = os.path.join(save_dir, f"{serial_no}_DC特性_{sheet_title}_{timestamp}.png")
 
         if not os.path.exists(xlsx_path):
             return png_path
@@ -828,16 +869,14 @@ class DCCharTab(ttk.Frame):
                 wb = excel.Workbooks.Open(os.path.abspath(xlsx_path))
                 ws = wb.Sheets(1)
 
-                # 表範囲: A1～最終データ行（ヘッダー1行 + データ行）
+                # 表範囲
                 if sheet_name == 'position':
                     last_row = 25  # 1 header + 24 data
-                    last_col = 'H'
-                elif sheet_name == 'lbc':
+                elif sheet_name == 'moni':
+                    last_row = 17  # 1 header + 16 data
+                else:  # lbc
                     last_row = 1 + len(data)
-                    last_col = 'I'
-                else:  # moni
-                    last_row = 1 + len(data)
-                    last_col = 'H'
+                last_col = 'H'
 
                 rng = ws.Range(f"A1:{last_col}{last_row}")
                 rng.CopyPicture(Appearance=1, Format=2)  # xlScreen, xlBitmap

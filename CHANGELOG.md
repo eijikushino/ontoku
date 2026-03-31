@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.55] - 2026-03-31
+### 追加
+- DC特性: moni表のdocx仕様対応（4DEF×4行固定枠、セル結合、小数2桁、数式埋込）
+- DC特性: テンプレートにmoniシートを追加
+### 変更
+- DC特性: XLSX/PNGファイル名を種別入りに統一（{SN}_DC特性_{種別}_{timestamp}）
+- DC特性: Position/moniを種別ごとの個別ファイルに変更
+
 ## [1.54] - 2026-03-30
 ### 改善
 - DC特性: 結果サマリーに誤差%列を追加（Excel列順と一致する8列構成）
