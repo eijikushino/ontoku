@@ -22,11 +22,12 @@ class DCCharTab(ttk.Frame):
 
     SETTINGS_KEY = "dc_char"
 
-    def __init__(self, parent, gpib_3458a, gpib_3499b, datagen_manager, test_tab):
+    def __init__(self, parent, gpib_3458a, gpib_3499b, datagen_manager, serial_manager, test_tab):
         super().__init__(parent)
         self.gpib_dmm = gpib_3458a
         self.gpib_scanner = gpib_3499b
         self.datagen = datagen_manager
+        self.serial_mgr = serial_manager  # DEFシリアル通信（CAL用）
         self.test_tab = test_tab
         self.scanner_slot = "1"
 
@@ -141,6 +142,20 @@ class DCCharTab(ttk.Frame):
                 ttk.Combobox(row, textvariable=self.test_tab.scanner_channels_neg[i],
                              values=ch_values, width=5, state="readonly").pack(side="left", padx=2)
 
+        # ログ表示（DEF/DataGen操作ログ）
+        from tkinter.scrolledtext import ScrolledText
+        log_header = ttk.Frame(left)
+        log_header.pack(fill="x", padx=5, pady=(2, 0))
+        ttk.Label(log_header, text="操作ログ").pack(side="left")
+        ttk.Button(log_header, text="クリア", width=5,
+                   command=self._clear_log).pack(side="right")
+        log_frame = ttk.Frame(left, padding=3)
+        log_frame.pack(fill="both", expand=True, padx=5, pady=(0, 2))
+        self.log_area = ScrolledText(log_frame, font=("Consolas", 8), wrap="none",
+                                      height=8, width=38)
+        self.log_area.pack(fill="both", expand=True)
+        self.log_area.config(state="disabled")
+
         # === 右パネル ===
         # 実行制御（右上に配置、保存先パスを広く表示）
         ctrl_frame = ttk.LabelFrame(right, text="実行制御", padding=5)
@@ -166,6 +181,12 @@ class DCCharTab(ttk.Frame):
         ttk.Button(save_row, text="参照", width=4,
                    command=self._browse_save_dir).pack(side="left")
 
+        opt_row = ttk.Frame(ctrl_frame)
+        opt_row.pack(fill="x", pady=2)
+        self.var_cal_enabled = tk.BooleanVar(value=False)
+        ttk.Checkbutton(opt_row, text="計測前CAL(LBC)",
+                        variable=self.var_cal_enabled).pack(side="left")
+
         # 結果サマリー（Excelと同じ列順）
         result_frame = ttk.LabelFrame(right, text="結果サマリー", padding=5)
         result_frame.pack(fill="both", expand=True, padx=5, pady=2)
@@ -180,13 +201,13 @@ class DCCharTab(ttk.Frame):
         self.tree.heading('error', text='誤差(V)')
         self.tree.heading('error_pct', text='誤差(%)')
         self.tree.heading('judge', text='判定')
-        self.tree.column('def_name', width=55, anchor='center')
+        self.tree.column('def_name', width=50, anchor='center')
         self.tree.column('part', width=35, anchor='center')
-        self.tree.column('code', width=65, anchor='e')
-        self.tree.column('voltage', width=100, anchor='e')
-        self.tree.column('expected', width=130, anchor='e')
-        self.tree.column('error', width=80, anchor='e')
-        self.tree.column('error_pct', width=70, anchor='e')
+        self.tree.column('code', width=60, anchor='e')
+        self.tree.column('voltage', width=75, anchor='e')
+        self.tree.column('expected', width=100, anchor='e')
+        self.tree.column('error', width=65, anchor='e')
+        self.tree.column('error_pct', width=55, anchor='e')
         self.tree.column('judge', width=35, anchor='center')
         self.tree.tag_configure('ok', background='#d5f5e3')
         self.tree.tag_configure('ng', background='#f5b7b1')
@@ -200,6 +221,18 @@ class DCCharTab(ttk.Frame):
         d = filedialog.askdirectory(title="保存先ディレクトリ選択")
         if d:
             self.save_dir.set(d)
+
+    def _clear_log(self):
+        self.log_area.config(state="normal")
+        self.log_area.delete("1.0", "end")
+        self.log_area.config(state="disabled")
+
+    def _append_log(self, text):
+        """操作ログにテキスト追加"""
+        self.log_area.config(state="normal")
+        self.log_area.insert("end", text.rstrip() + "\n")
+        self.log_area.see("end")
+        self.log_area.config(state="disabled")
 
     # ==================== 計測制御 ====================
     def _start_measurement(self):
@@ -242,8 +275,9 @@ class DCCharTab(ttk.Frame):
                 msg_type, data = self._update_queue.get_nowait()
                 if msg_type == 'progress':
                     self.var_progress_label.set(data)
+                elif msg_type == 'log':
+                    self._append_log(data)
                 elif msg_type == 'row':
-                    # (def_name, part, code, voltage_str, expected_str, error_str, judge)
                     tag = 'ok' if data[-1] == 'OK' else 'ng'
                     self.tree.insert('', 'end', values=data, tags=(tag,))
                     self.tree.see(self.tree.get_children()[-1])
@@ -311,15 +345,13 @@ class DCCharTab(ttk.Frame):
         orig_timeout = self.gpib_scanner.instrument.timeout
         self.gpib_scanner.instrument.timeout = 5000
         try:
-            # cponで全チャンネルOPEN
+            self._update_queue.put(('log', f"[Scanner] cpon → CLOSE ({channel_addr})"))
             self.gpib_scanner.write(f":system:cpon {self.scanner_slot}")
             time.sleep(switch_delay / 2)
-            # *OPC?でcpon完了を確認（警告抑制: queryではなくwrite+read_stb方式）
             import warnings
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
                 self.gpib_scanner.query("*OPC?")
-            # 対象CHをCLOSE
             self.gpib_scanner.write(f"CLOSE ({channel_addr})")
             time.sleep(switch_delay / 2)
         finally:
@@ -331,14 +363,18 @@ class DCCharTab(ttk.Frame):
         try:
             success, response = self.gpib_dmm.query("TRIG SGL")
             if success and response:
-                return float(response.strip())
+                val = float(response.strip())
+                self._update_queue.put(('log', f"[DMM] TRIG SGL → {val}"))
+                return val
         except Exception:
             pass
         finally:
             self.gpib_dmm.instrument.timeout = orig_timeout
+        self._update_queue.put(('log', "[DMM] TRIG SGL → 計測失敗"))
         return None
 
     def _datagen_send(self, cmd):
+        self._update_queue.put(('log', f"[DG] SEND: {cmd}"))
         self.datagen.send_command(cmd)
         time.sleep(0.05)
 
@@ -353,6 +389,17 @@ class DCCharTab(ttk.Frame):
             settle = self.settle_time_var.get()
             switch_delay = self.switch_delay_sec.get()
             test_type = self.test_type.get()
+
+            # DEF remoteモード設定
+            if self.serial_mgr and self.serial_mgr.is_connected():
+                for def_info in selected_defs:
+                    cmd = f"DEF {def_info['index']} remote"
+                    self._update_queue.put(('log', f"[DEF] SEND: {cmd}"))
+                    response = self.serial_mgr.send_command_with_response(
+                        cmd, wait_sec=0.1, read_timeout=0.5
+                    )
+                    if response:
+                        self._update_queue.put(('log', f"[DEF] RECV: {response}"))
 
             # 初期化
             self._scanner_cpon()
@@ -371,20 +418,22 @@ class DCCharTab(ttk.Frame):
 
             self._datagen_send("gen start")
 
+            # 結果領域を初期化
             for def_info in selected_defs:
-                if self._stop_event.is_set():
-                    break
+                self._results[def_info['index']] = {'position': [], 'lbc': [], 'moni': []}
 
-                def_name = def_info['name']
-                def_idx = def_info['index']
-                self._results[def_idx] = {'position': [], 'lbc': [], 'moni': []}
-
-                if test_type == "Position":
-                    self._run_position_test(def_info, settle, switch_delay)
-                elif test_type == "LBC":
-                    self._run_lbc_test(def_info, settle, switch_delay)
-                else:  # moni
-                    self._run_moni_test(def_info, settle, switch_delay)
+            if test_type == "LBC":
+                # LBC: ATTが外側ループ（ATT切替+CALは3回のみ）
+                self._run_lbc_all(selected_defs, settle, switch_delay)
+            else:
+                # Position/moni: DEFが外側ループ
+                for def_info in selected_defs:
+                    if self._stop_event.is_set():
+                        break
+                    if test_type == "Position":
+                        self._run_position_test(def_info, settle, switch_delay)
+                    else:
+                        self._run_moni_test(def_info, settle, switch_delay)
 
             # 後片付け: コードをcenterに戻す
             self._scanner_cpon()
@@ -393,6 +442,17 @@ class DCCharTab(ttk.Frame):
             self._datagen_send("alt a 80000 cii p")
             self._datagen_send("alt a 80000 cii n")
             self._datagen_send("alt s sa")
+
+            # LBC計測後: 全DEFをLATT 1/2に戻す
+            if test_type == "LBC" and self.serial_mgr and self.serial_mgr.is_connected():
+                for def_info in selected_defs:
+                    latt_cmd = f"DEF {def_info['index']} LATT 2"
+                    self._update_queue.put(('log', f"[DEF] SEND: {latt_cmd}"))
+                    response = self.serial_mgr.send_command_with_response(
+                        latt_cmd, wait_sec=0.1, read_timeout=0.5
+                    )
+                    if response:
+                        self._update_queue.put(('log', f"[DEF] RECV: {response}"))
 
             if self._stop_event.is_set():
                 self._update_queue.put(('done', "計測を中断しました"))
@@ -480,48 +540,194 @@ class DCCharTab(ttk.Frame):
                 tp.expected_str, e_str, ep_str, judge
             )))
 
-    def _run_lbc_test(self, def_info, settle, switch_delay):
-        """LBC計測"""
-        def_name = def_info['name']
-        def_idx = def_info['index']
-        for li, tp in enumerate(LBC_TEST_POINTS):
+    def _cal_all_defs(self, selected_defs):
+        """全DEFに一斉CAL送信 → ラウンドロビンポーリングで全完了待ち。
+        戻り値: True=全OK, False=いずれかNG/TIMEOUT
+        """
+        if not self.serial_mgr or not self.serial_mgr.is_connected():
+            self._update_queue.put(('log', "[CAL] シリアル未接続"))
+            return False
+
+        # 1. 全DEFにcal一斉送信
+        pending = {}  # {def_index: "waiting"}
+        for def_info in selected_defs:
+            di = def_info['index']
+            cmd = f"DEF {di} cal"
+            self._update_queue.put(('log', f"[DEF] SEND: {cmd}"))
+            self.serial_mgr.send_command(cmd)
+            time.sleep(0.3)
+            pending[di] = "waiting"
+
+        # 2. ラウンドロビンポーリング（3秒間隔、最大120秒）
+        max_wait = 240
+        elapsed = 0
+        poll_interval = 3
+        while elapsed < max_wait and pending:
+            if self._stop_event.is_set():
+                return False
+            time.sleep(poll_interval)
+            elapsed += poll_interval
+
+            for di in list(pending.keys()):
+                if self._stop_event.is_set():
+                    return False
+                status_cmd = f"DEF {di} cal s"
+                response = self.serial_mgr.send_command_with_response(
+                    status_cmd, wait_sec=0.1, read_timeout=1.0
+                )
+                self._update_queue.put(('log', f"[DEF] SEND: {status_cmd}"))
+                if response:
+                    self._update_queue.put(('log', f"[DEF] RECV: {response}"))
+                    resp_lower = response.lower()
+                    if "complete" in resp_lower:
+                        self._update_queue.put(('log', f"[CAL] DEF{di} → 完了 (OK)"))
+                        del pending[di]
+                    elif "failed" in resp_lower or "error" in resp_lower:
+                        self._update_queue.put(('log', f"[CAL] DEF{di} → 失敗 (NG)"))
+                        self._update_queue.put(('progress', f"CAL DEF{di} NG"))
+                        return False
+                    elif "in excution" in resp_lower or "executing" in resp_lower:
+                        pass  # 継続
+
+            # 進捗表示
+            done = len(selected_defs) - len(pending)
+            names = [f"DEF{di}" for di in pending]
+            self._update_queue.put(('progress',
+                f"CAL {done}/{len(selected_defs)}完了 待機中:{','.join(names)} ({elapsed}s/{max_wait}s)"))
+
+        if pending:
+            for di in pending:
+                self._update_queue.put(('log', f"[CAL] DEF{di} → タイムアウト ({max_wait}s)"))
+            self._update_queue.put(('progress', f"CAL タイムアウト"))
+            return False
+
+        self._update_queue.put(('log', f"[CAL] 全DEF完了 (OK)"))
+        self._update_queue.put(('progress', f"CAL 全DEF完了"))
+        return True
+
+    def _run_lbc_all(self, selected_defs, settle, switch_delay):
+        """LBC計測: ATTが外側ループ（CALはATT毎に1回 = 計3回）
+        ATT1/1 → CAL → DEF0計測 → DEF1計測 → ...
+        ATT1/2 → CAL → DEF0計測 → DEF1計測 → ...
+        ATT1/4 → CAL → DEF0計測 → DEF1計測 → ...
+        """
+        att_list = ['1/1', '1/2', '1/4']
+        att_map = {'1/1': '1', '1/2': '2', '1/4': '4'}
+        # ATTごとのテストポイント（FFFF, 0000の2点）
+        att_points = {}
+        for tp in LBC_TEST_POINTS:
+            att_points.setdefault(tp.att, []).append(tp)
+
+        for att in att_list:
             if self._stop_event.is_set():
                 break
-            self._update_queue.put(('progress', f"{def_name} / LBC / ATT{tp.att} {tp.display_code}"))
 
-            self._datagen_send(f"alt a {tp.address_code} cii p")
-            time.sleep(settle)
+            points = att_points.get(att, [])
+            latt_val = att_map.get(att, '1')
 
-            # POS計測
-            self._switch_scanner(self._ch_addr(def_info['pos_channel']), switch_delay)
-            voltage_pos = self._measure_voltage()
+            # ===== 1. LATT変更 =====
+            self._update_queue.put(('log', f""))
+            self._update_queue.put(('log', f"===== LBC ATT {att} ====="))
+            self._update_queue.put(('progress', f"LBC ATT {att} に切替"))
+            # 全DEFにLATT送信
+            if self.serial_mgr and self.serial_mgr.is_connected():
+                for def_info in selected_defs:
+                    latt_cmd = f"DEF {def_info['index']} LATT {latt_val}"
+                    self._update_queue.put(('log', f"[DEF] SEND: {latt_cmd}"))
+                    response = self.serial_mgr.send_command_with_response(
+                        latt_cmd, wait_sec=0.1, read_timeout=0.5
+                    )
+                    if response:
+                        self._update_queue.put(('log', f"[DEF] RECV: {response}"))
+            time.sleep(0.2)
 
-            # NEG計測
-            self._switch_scanner(self._ch_addr(def_info['neg_channel']), switch_delay)
-            voltage_neg = self._measure_voltage()
-
-            if voltage_pos is not None and voltage_neg is not None:
-                error_pos = voltage_pos - tp.expected_pos
-                error_neg = voltage_neg - tp.expected_neg
-                judge = "OK" if abs(error_pos) <= tp.tolerance and abs(error_neg) <= tp.tolerance else "NG"
+            # ===== 2. CAL（一斉送信→ラウンドロビンポーリング） =====
+            cal_failed = False
+            if self.var_cal_enabled.get():
+                if not self._cal_all_defs(selected_defs):
+                    self._update_queue.put(('log', f"[CAL] ATT{att} CAL失敗"))
+                    cal_failed = True
+                    # CAL NG結果を全DEF・全ポイントに記録
+                    self._update_queue.put(('row', ("", f"ATT{att}", "", "", "", "", "", "")))
+                    for def_info in selected_defs:
+                        for tp in points:
+                            self._results[def_info['index']]['lbc'].append({
+                                'att': tp.att, 'code': tp.display_code,
+                                'voltage_pos': None, 'voltage_neg': None,
+                                'expected_str': tp.expected_str,
+                                'error_pos': None, 'error_neg': None, 'judge': 'CAL NG',
+                            })
+                            self._update_queue.put(('row', (
+                                def_info['name'], "", tp.display_code, "CAL NG",
+                                tp.expected_str, "", "", "NG"
+                            )))
+                    continue  # 次のATTへ
             else:
-                error_pos, error_neg, judge = None, None, "NG"
+                self._update_queue.put(('log', f"[CAL] スキップ"))
 
-            self._results[def_idx]['lbc'].append({
-                'att': tp.att, 'code': tp.display_code,
-                'voltage_pos': voltage_pos, 'voltage_neg': voltage_neg,
-                'expected_str': tp.expected_str,
-                'error_pos': error_pos, 'error_neg': error_neg, 'judge': judge,
-            })
+            if self._stop_event.is_set():
+                break
 
-            vp = f"{voltage_pos:.3f}" if voltage_pos is not None else "---"
-            vn = f"{voltage_neg:.3f}" if voltage_neg is not None else "---"
-            ep = f"{error_pos:.3f}" if error_pos is not None else "---"
-            en = f"{error_neg:.3f}" if error_neg is not None else "---"
+            # ATT区切り行をサマリーに表示
             self._update_queue.put(('row', (
-                def_name, f"ATT{tp.att}", tp.display_code,
-                f"P:{vp} N:{vn}", tp.expected_str, f"P:{ep} N:{en}", "", judge
+                "", f"ATT{att}", "", "", "", "", "", ""
             )))
+
+            # ===== 3. 各DEFの計測 =====
+            for def_info in selected_defs:
+                if self._stop_event.is_set():
+                    break
+                def_name = def_info['name']
+                def_idx = def_info['index']
+
+                for tp in points:
+                    if self._stop_event.is_set():
+                        break
+                    self._update_queue.put(('progress',
+                        f"{def_name} / LBC ATT{att} {tp.display_code}"))
+
+                    self._datagen_send(f"alt a {tp.address_code} cii p")
+                    time.sleep(settle)
+
+                    # POS計測
+                    self._switch_scanner(self._ch_addr(def_info['pos_channel']), switch_delay)
+                    voltage_pos = self._measure_voltage()
+
+                    # NEG計測
+                    self._switch_scanner(self._ch_addr(def_info['neg_channel']), switch_delay)
+                    voltage_neg = self._measure_voltage()
+
+                    if voltage_pos is not None and voltage_neg is not None:
+                        error_pos = voltage_pos - tp.expected_pos
+                        error_neg = voltage_neg - tp.expected_neg
+                        judge_pos = "OK" if abs(error_pos) <= tp.tolerance else "NG"
+                        judge_neg = "OK" if abs(error_neg) <= tp.tolerance else "NG"
+                        judge = "OK" if judge_pos == "OK" and judge_neg == "OK" else "NG"
+                    else:
+                        error_pos, error_neg = None, None
+                        judge_pos, judge_neg, judge = "NG", "NG", "NG"
+
+                    self._results[def_idx]['lbc'].append({
+                        'att': tp.att, 'code': tp.display_code,
+                        'voltage_pos': voltage_pos, 'voltage_neg': voltage_neg,
+                        'expected_str': tp.expected_str,
+                        'error_pos': error_pos, 'error_neg': error_neg, 'judge': judge,
+                    })
+
+                    # POS行
+                    vp = f"{voltage_pos:.3f}" if voltage_pos is not None else "---"
+                    ep = f"{error_pos:.3f}" if error_pos is not None else "---"
+                    self._update_queue.put(('row', (
+                        def_name, "POS", tp.display_code, vp,
+                        tp.expected_str, ep, "", judge_pos
+                    )))
+                    # NEG行
+                    vn = f"{voltage_neg:.3f}" if voltage_neg is not None else "---"
+                    en = f"{error_neg:.3f}" if error_neg is not None else "---"
+                    self._update_queue.put(('row', (
+                        "", "NEG", tp.display_code, vn,
+                        "", en, "", judge_neg
+                    )))
 
     def _run_moni_test(self, def_info, settle, switch_delay):
         """moni計測"""
@@ -691,65 +897,127 @@ class DCCharTab(ttk.Frame):
             for ri in range(3, 6):
                 ws.cell(row=base + ri, column=2).border = border_all
 
-        # 行高さ16、列幅
         for r in range(1, 26 + 1):
             ws.row_dimensions[r].height = 16
         for c, w in {1: 14, 2: 6, 3: 12, 4: 14, 5: 22, 6: 10, 7: 10, 8: 6}.items():
             ws.column_dimensions[openpyxl.utils.get_column_letter(c)].width = w
 
     def _write_lbc_sheet(self, ws, data, serial_no):
+        """LBC XLSX書き込み（docx仕様: 9列、4DEF固定枠、セル結合、数式埋込、小数3桁）"""
         thin = Side(style='thin')
+        thick = Side(style='medium')
         border_all = Border(top=thin, left=thin, right=thin, bottom=thin)
-        hdr_font = Font(name='MS Pゴシック', size=9, bold=True)
-        dat_font = Font(name='MS Pゴシック', size=9)
-        center = Alignment(horizontal='center', vertical='center')
-        hdr_fill = PatternFill(start_color='D4E6F1', end_color='D4E6F1', fill_type='solid')
-        ok_fill = PatternFill(start_color='D5F5E3', end_color='D5F5E3', fill_type='solid')
-        ng_fill = PatternFill(start_color='F5B7B1', end_color='F5B7B1', fill_type='solid')
+        border_top_thick = Border(top=thick, left=thin, right=thin, bottom=thin)
+        dat_font = Font(name='MS Pゴシック', size=10)
+        center = Alignment(horizontal='center', vertical='center', wrap_text=True)
+        right_align = Alignment(horizontal='right', vertical='center')
 
-        headers = ['', 'ﾕﾆｯﾄNo.', 'LBC ATT', '入力ｺｰﾄﾞ', 'POS出力電圧(V)', 'NEG出力電圧(V)',
-                   '期待値(V)', 'POS 誤差(V)', 'NEG 誤差(V)', '結果']
+        headers = ['ﾕﾆｯﾄ No.', 'LBC\nATT', '入力ｺｰﾄﾞ', 'POS 出力電圧(V)', 'NEG 出力電圧(V)',
+                   '許容差(V)', 'POS 誤差\n(V)', 'NEG 誤差\n(V)', '判定']
         for c, h in enumerate(headers, 1):
             cell = ws.cell(row=1, column=c, value=h)
-            cell.font = hdr_font
-            cell.alignment = center
-            cell.border = border_all
-            cell.fill = hdr_fill
+            cell.font = dat_font; cell.alignment = center; cell.border = border_all
 
-        for i, d in enumerate(data):
-            r = i + 2
-            ws.cell(row=r, column=1, value='').border = border_all
-            ws.cell(row=r, column=2, value=serial_no if i == 0 else '').font = dat_font
-            ws.cell(row=r, column=2).border = border_all
-            ws.cell(row=r, column=2).alignment = center
-            ws.cell(row=r, column=3, value=d['att']).font = dat_font
-            ws.cell(row=r, column=3).border = border_all
-            ws.cell(row=r, column=3).alignment = center
-            ws.cell(row=r, column=4, value=d['code']).font = dat_font
-            ws.cell(row=r, column=4).border = border_all
-            ws.cell(row=r, column=4).alignment = center
-            ws.cell(row=r, column=5, value=d['voltage_pos']).font = dat_font
-            ws.cell(row=r, column=5).border = border_all
-            ws.cell(row=r, column=5).number_format = '0.000000'
-            ws.cell(row=r, column=6, value=d['voltage_neg']).font = dat_font
-            ws.cell(row=r, column=6).border = border_all
-            ws.cell(row=r, column=6).number_format = '0.000000'
-            ws.cell(row=r, column=7, value=d['expected_str']).font = dat_font
-            ws.cell(row=r, column=7).border = border_all
-            ws.cell(row=r, column=7).alignment = center
-            ws.cell(row=r, column=8, value=d['error_pos']).font = dat_font
-            ws.cell(row=r, column=8).border = border_all
-            ws.cell(row=r, column=8).number_format = '0.000000'
-            ws.cell(row=r, column=9, value=d['error_neg']).font = dat_font
-            ws.cell(row=r, column=9).border = border_all
-            ws.cell(row=r, column=9).number_format = '0.000000'
-            jcell = ws.cell(row=r, column=10, value=d['judge'])
-            jcell.font = dat_font
-            jcell.border = border_all
-            jcell.alignment = center
-            jcell.fill = ok_fill if d['judge'] == 'OK' else ng_fill
+        # 期待値数値（POS/NEG）: ATT 1/1, 1/2, 1/4 の FFFF/0000
+        expected_pos = [6.180, -6.180, 3.090, -3.090, 1.545, -1.545]
+        expected_neg = [-6.180, 6.180, -3.090, 3.090, -1.545, 1.545]
+        expected_strs = ['±6.180±0.062', '', '±3.090±0.031', '', '±1.545±0.015', '']
+        code_strs = ['FFFF H', '0000 H', 'FFFF H', '0000 H', 'FFFF H', '0000 H']
 
-        for c, w in {1: 4, 2: 14, 3: 8, 4: 12, 5: 18, 6: 18, 7: 18, 8: 18, 9: 18, 10: 8}.items():
+        for slot in range(4):
+            base = 2 + slot * 6
+            if slot == 0 and data:
+                slot_data = data
+                unit_label = f"1PB397MK2\n{serial_no}"
+            else:
+                slot_data = None
+                unit_label = ""
+
+            for ri in range(6):
+                r = base + ri
+                bdr = border_top_thick if ri == 0 else border_all
+
+                if slot_data and ri < len(slot_data):
+                    d = slot_data[ri]
+                    is_cal_ng = (d['judge'] == 'CAL NG')
+                    vp = d['voltage_pos'] if d['voltage_pos'] is not None else ''
+                    vn = d['voltage_neg'] if d['voltage_neg'] is not None else ''
+                    judge = d['judge']
+                else:
+                    is_cal_ng = False
+                    vp, vn, judge = '', '', ''
+
+                c3 = ws.cell(row=r, column=3, value=code_strs[ri])
+                c3.font = dat_font; c3.alignment = right_align; c3.border = bdr
+
+                if is_cal_ng:
+                    # CAL NG: 電圧欄に"CAL NG"、誤差・判定も"CAL NG"
+                    c4 = ws.cell(row=r, column=4, value='CAL NG')
+                    c4.font = dat_font; c4.alignment = center; c4.border = bdr
+                    c5 = ws.cell(row=r, column=5, value='CAL NG')
+                    c5.font = dat_font; c5.alignment = center; c5.border = bdr
+                    c7 = ws.cell(row=r, column=7, value='')
+                    c7.font = dat_font; c7.alignment = right_align; c7.border = bdr
+                    c8 = ws.cell(row=r, column=8, value='')
+                    c8.font = dat_font; c8.alignment = right_align; c8.border = bdr
+                    c9 = ws.cell(row=r, column=9, value='CAL NG')
+                    c9.font = dat_font; c9.alignment = center; c9.border = bdr
+                else:
+                    # POS電圧
+                    c4 = ws.cell(row=r, column=4, value=vp)
+                    c4.font = dat_font; c4.alignment = right_align; c4.border = bdr
+                    if vp != '': c4.number_format = '0.000'
+                    # NEG電圧
+                    c5 = ws.cell(row=r, column=5, value=vn)
+                    c5.font = dat_font; c5.alignment = right_align; c5.border = bdr
+                    if vn != '': c5.number_format = '0.000'
+                    # POS誤差 = POS電圧 - 期待値（数式）
+                    if vp != '':
+                        c7 = ws.cell(row=r, column=7, value=f'=D{r}-({expected_pos[ri]})')
+                    else:
+                        c7 = ws.cell(row=r, column=7, value='')
+                    c7.font = dat_font; c7.alignment = right_align; c7.border = bdr
+                    c7.number_format = '0.000'
+                    # NEG誤差 = NEG電圧 - 期待値（数式）
+                    if vn != '':
+                        c8 = ws.cell(row=r, column=8, value=f'=E{r}-({expected_neg[ri]})')
+                    else:
+                        c8 = ws.cell(row=r, column=8, value='')
+                    c8.font = dat_font; c8.alignment = right_align; c8.border = bdr
+                    c8.number_format = '0.000'
+                    # 判定
+                    c9 = ws.cell(row=r, column=9, value=judge)
+                    c9.font = dat_font; c9.alignment = center; c9.border = bdr
+
+            # ﾕﾆｯﾄNo: 6行結合
+            ws.merge_cells(start_row=base, start_column=1, end_row=base + 5, end_column=1)
+            ws.cell(row=base, column=1, value=unit_label).font = dat_font
+            ws.cell(row=base, column=1).alignment = center
+            for ri in range(6):
+                ws.cell(row=base + ri, column=1).border = border_top_thick if ri == 0 else border_all
+
+            # ATT: 各2行結合
+            for ai, att_val in enumerate(['1/1', '1/2', '1/4']):
+                sr = base + ai * 2
+                ws.merge_cells(start_row=sr, start_column=2, end_row=sr + 1, end_column=2)
+                ws.cell(row=sr, column=2, value=att_val).font = dat_font
+                ws.cell(row=sr, column=2).alignment = center
+                for ri in range(2):
+                    ws.cell(row=sr + ri, column=2).border = border_top_thick if (ai == 0 and ri == 0) else border_all
+
+            # 許容差: 各2行結合
+            for ai, exp_val in enumerate(['±6.180±0.062', '±3.090±0.031', '±1.545±0.015']):
+                sr = base + ai * 2
+                ws.merge_cells(start_row=sr, start_column=6, end_row=sr + 1, end_column=6)
+                ws.cell(row=sr, column=6, value=exp_val).font = dat_font
+                ws.cell(row=sr, column=6).alignment = right_align
+                for ri in range(2):
+                    ws.cell(row=sr + ri, column=6).border = border_top_thick if (ai == 0 and ri == 0) else border_all
+
+        ws.row_dimensions[1].height = 32
+        for r in range(2, 26):
+            ws.row_dimensions[r].height = 16
+        for c, w in {1: 14, 2: 6, 3: 12, 4: 14, 5: 14, 6: 18, 7: 10, 8: 10, 9: 6}.items():
             ws.column_dimensions[openpyxl.utils.get_column_letter(c)].width = w
 
     def _write_moni_sheet(self, ws, data, serial_no):
@@ -871,12 +1139,14 @@ class DCCharTab(ttk.Frame):
 
                 # 表範囲
                 if sheet_name == 'position':
-                    last_row = 25  # 1 header + 24 data
+                    last_row = 25   # 1 header + 24 data
+                    last_col = 'H'  # 8列
                 elif sheet_name == 'moni':
-                    last_row = 17  # 1 header + 16 data
+                    last_row = 17   # 1 header + 16 data
+                    last_col = 'H'  # 8列
                 else:  # lbc
-                    last_row = 1 + len(data)
-                last_col = 'H'
+                    last_row = 25   # 1 header + 24 data
+                    last_col = 'I'  # 9列
 
                 rng = ws.Range(f"A1:{last_col}{last_row}")
                 rng.CopyPicture(Appearance=1, Format=2)  # xlScreen, xlBitmap

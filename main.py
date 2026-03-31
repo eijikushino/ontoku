@@ -63,7 +63,7 @@ class MainApplication(tk.Tk):
         self.linearity_tab = LinearityTab(content, self.gpib_3458a, self.gpib_3499b,
                                            self.datagen_manager, self.test_tab)
         self.dc_char_tab = DCCharTab(content, self.gpib_3458a, self.gpib_3499b,
-                                      self.datagen_manager, self.test_tab)
+                                      self.datagen_manager, self.serial_manager, self.test_tab)
 
         # TestタブにDACタブのDEF選択状態を共有
         self.test_tab.set_def_vars(self.dac_tab.def_vars)

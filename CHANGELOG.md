@@ -2,6 +2,26 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.56] - 2026-03-31
+### 追加
+- DC特性: LBC表docx仕様対応（9列、セル結合、数式埋込、4DEF固定枠）
+- DC特性: LBC ATT切替をDEFシリアル経由LATT命令に変更
+- DC特性: LBC計測前CALチェックボックス（一斉送信→ラウンドロビンポーリング方式）
+- DC特性: CAL失敗時にExcelにCAL NG記録
+- DC特性: DEF remoteモード設定（計測開始時）
+- DC特性: 操作ログにクリアボタン追加
+- DC特性: LBC計測終了後に全DEFをLATT 1/2に復帰
+### 改善
+- DC特性: LBCコードを20bit上位詰め5桁HEXに修正（FFFF→FFFF0）
+- DC特性: LBCループをATT外側に変更（CAL回数をATT3回に削減）
+- DC特性: LBC結果サマリーをPOS/NEG別行表示（Positionと同スタイル）
+- DC特性: LBCヘッダー行高さ32（2段文字対応）
+### 変更
+- DC特性: テンプレートをdc_char_template.xlsx（3シート統合）に変更、旧ファイル削除
+- DC特性: CALスキップ→計測前CAL(LBC)に名称・ロジック反転
+- DC特性: CALタイムアウトを240秒に変更
+- DC特性: main.pyにserial_manager追加（DEF CAL用）
+
 ## [1.55] - 2026-03-31
 ### 追加
 - DC特性: moni表のdocx仕様対応（4DEF×4行固定枠、セル結合、小数2桁、数式埋込）
