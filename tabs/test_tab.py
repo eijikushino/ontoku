@@ -279,8 +279,10 @@ class TestTab(ttk.Frame):
         button_row = ttk.Frame(control_frame)
         button_row.pack(fill=tk.X, pady=2)
         
-        self.start_button = ttk.Button(button_row, text="開始", 
-                                        command=self.start_test, width=10)
+        self.start_button = tk.Button(button_row, text="開始",
+                                       command=self.start_test, width=10,
+                                       bg="#4CAF50", fg="white", font=("Arial", 10, "bold"),
+                                       relief="raised", cursor="hand2")
         self.start_button.pack(side=tk.LEFT, padx=2, expand=True, fill=tk.X)
         
         self.hold_button = ttk.Button(button_row, text="ホールド", 

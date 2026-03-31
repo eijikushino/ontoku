@@ -163,9 +163,13 @@ class DCCharTab(ttk.Frame):
 
         btn_row = ttk.Frame(ctrl_frame)
         btn_row.pack(fill="x", pady=2)
-        self.btn_start = ttk.Button(btn_row, text="開始", command=self._start_measurement)
+        self.btn_start = tk.Button(btn_row, text="開始", command=self._start_measurement,
+                                    width=6, bg="#4CAF50", fg="white", font=("Arial", 10, "bold"),
+                                    relief="raised", cursor="hand2")
         self.btn_start.pack(side="left", padx=2)
-        self.btn_stop = ttk.Button(btn_row, text="停止", command=self._stop_measurement, state="disabled")
+        self.btn_stop = tk.Button(btn_row, text="停止", command=self._stop_measurement,
+                                   width=6, font=("Arial", 10, "bold"),
+                                   relief="raised", state="disabled")
         self.btn_stop.pack(side="left", padx=2)
         self.var_progress_label = tk.StringVar(value="待機中")
         ttk.Label(btn_row, textvariable=self.var_progress_label,

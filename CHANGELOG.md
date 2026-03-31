@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.57] - 2026-03-31
+### 追加
+- Linearity: 極性選択（両極/POS/NEG）をDAC設定枠に追加
+- 開始ボタンを緑色太字に変更（Pattern Test/Linearity/DC特性）
+### 改善
+- Linearity: Position/LBC選択を横並びに変更
+- Linearity: NG判定閾値のGain/Offsetを横並びに変更（スペース確保）
+- DC特性: 開始/停止ボタンをtk.Buttonに統一（同幅・同フォント）
+### 修正
+- Linearity: スキャナ*OPC?のpyvisa終端文字警告を抑制
+
 ## [1.56] - 2026-03-31
 ### 追加
 - DC特性: LBC表docx仕様対応（9列、セル結合、数式埋込、4DEF固定枠）

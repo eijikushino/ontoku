@@ -47,6 +47,7 @@ class LinearityTab(ttk.Frame):
         self.num_points = tk.StringVar(value='64')
         self.pattern_file = tk.StringVar(value='')
         self.dac_var = tk.StringVar(value='Position')
+        self.pole_select = tk.StringVar(value='両極')  # 両極 / POS / NEG
         self.settle_time_var = tk.DoubleVar(value=0.2)
         self.th_gain = tk.DoubleVar(value=0.01)
         self.th_offset = tk.DoubleVar(value=10.0)
@@ -57,7 +58,7 @@ class LinearityTab(ttk.Frame):
         self._create_widgets()
 
         # 全設定変数の変更を監視して自動保存
-        for var in [self.pattern_mode, self.num_points, self.dac_var,
+        for var in [self.pattern_mode, self.num_points, self.dac_var, self.pole_select,
                     self.settle_time_var, self.th_gain, self.th_offset,
                     self.th_error, self.save_dir, self.pattern_file]:
             var.trace_add("write", lambda *_: self._save_settings())
@@ -123,8 +124,17 @@ class LinearityTab(ttk.Frame):
         # --- DAC設定 ---
         dac_frame = ttk.LabelFrame(parent, text="DAC設定", padding=8)
         dac_frame.pack(fill=tk.X, pady=(0, 5))
-        ttk.Radiobutton(dac_frame, text="Position (20bit)", variable=self.dac_var, value='Position').pack(anchor=tk.W)
-        ttk.Radiobutton(dac_frame, text="LBC (16bit)", variable=self.dac_var, value='LBC').pack(anchor=tk.W)
+
+        dac_row = ttk.Frame(dac_frame)
+        dac_row.pack(fill=tk.X)
+        ttk.Radiobutton(dac_row, text="Position (20bit)", variable=self.dac_var, value='Position').pack(side=tk.LEFT)
+        ttk.Radiobutton(dac_row, text="LBC (16bit)", variable=self.dac_var, value='LBC').pack(side=tk.LEFT, padx=(10, 0))
+
+        pole_row = ttk.Frame(dac_frame)
+        pole_row.pack(fill=tk.X, pady=2)
+        ttk.Label(pole_row, text="極性:").pack(side=tk.LEFT)
+        for p in ["両極", "POS", "NEG"]:
+            ttk.Radiobutton(pole_row, text=p, variable=self.pole_select, value=p).pack(side=tk.LEFT, padx=(5, 0))
 
         settle_frame = ttk.Frame(dac_frame)
         settle_frame.pack(fill=tk.X, pady=2)
@@ -173,14 +183,21 @@ class LinearityTab(ttk.Frame):
         # --- NG判定閾値 ---
         th_frame = ttk.LabelFrame(parent, text="NG判定閾値", padding=4)
         th_frame.pack(fill=tk.X, pady=(0, 5))
-        for label, var, unit in [("Gain:", self.th_gain, "LSB/LSB"),
-                                  ("Offset:", self.th_offset, "LSB"),
-                                  ("Error:", self.th_error, "LSB")]:
-            row = ttk.Frame(th_frame)
-            row.pack(fill=tk.X, pady=1)
-            ttk.Label(row, text=label, width=7).pack(side=tk.LEFT)
-            ttk.Entry(row, textvariable=var, width=8).pack(side=tk.LEFT, padx=2)
-            ttk.Label(row, text=unit).pack(side=tk.LEFT)
+
+        go_row = ttk.Frame(th_frame)
+        go_row.pack(fill=tk.X, pady=1)
+        ttk.Label(go_row, text="Gain:").pack(side=tk.LEFT)
+        ttk.Entry(go_row, textvariable=self.th_gain, width=6).pack(side=tk.LEFT, padx=2)
+        ttk.Label(go_row, text="LSB/LSB").pack(side=tk.LEFT)
+        ttk.Label(go_row, text="  Offset:").pack(side=tk.LEFT)
+        ttk.Entry(go_row, textvariable=self.th_offset, width=6).pack(side=tk.LEFT, padx=2)
+        ttk.Label(go_row, text="LSB").pack(side=tk.LEFT)
+
+        err_row = ttk.Frame(th_frame)
+        err_row.pack(fill=tk.X, pady=1)
+        ttk.Label(err_row, text="Error:").pack(side=tk.LEFT)
+        ttk.Entry(err_row, textvariable=self.th_error, width=6).pack(side=tk.LEFT, padx=2)
+        ttk.Label(err_row, text="LSB").pack(side=tk.LEFT)
 
         # --- 実行制御 ---
         ctrl_frame = ttk.LabelFrame(parent, text="実行制御", padding=4)
@@ -188,7 +205,9 @@ class LinearityTab(ttk.Frame):
 
         btn_row = ttk.Frame(ctrl_frame)
         btn_row.pack(fill=tk.X, pady=2)
-        self.start_btn = ttk.Button(btn_row, text="開始", command=self.start_measurement, width=10)
+        self.start_btn = tk.Button(btn_row, text="開始", command=self.start_measurement, width=10,
+                                    bg="#4CAF50", fg="white", font=("Arial", 10, "bold"),
+                                    relief="raised", cursor="hand2")
         self.start_btn.pack(side=tk.LEFT, padx=2)
         self.stop_btn = ttk.Button(btn_row, text="停止", command=self.stop_measurement,
                                     state=tk.DISABLED, width=10)
@@ -303,6 +322,7 @@ class LinearityTab(ttk.Frame):
                     self.dac_var.set('LBC')
                 else:
                     self.dac_var.set('Position')
+                self.pole_select.set(lin.get('pole_select', '両極'))
                 self.settle_time_var.set(lin.get('settle_time', 0.2))
                 self.th_gain.set(lin.get('th_gain', 0.01))
                 self.th_offset.set(lin.get('th_offset', 10.0))
@@ -322,6 +342,7 @@ class LinearityTab(ttk.Frame):
                 'pattern_mode': self.pattern_mode.get(),
                 'num_points': self.num_points.get(),
                 'dac_type': self.dac_var.get(),
+                'pole_select': self.pole_select.get(),
                 'settle_time': self.settle_time_var.get(),
                 'th_gain': self.th_gain.get(),
                 'th_offset': self.th_offset.get(),
@@ -561,7 +582,16 @@ class LinearityTab(ttk.Frame):
                     linear_pole_results = {}
                     common_timestamp = time.strftime('%Y%m%d_%H%M%S')
 
-                    for pole in ['POS', 'NEG']:
+                    # 極性フィルタ
+                    pole_sel = self.pole_select.get()
+                    if pole_sel == 'POS':
+                        poles = ['POS']
+                    elif pole_sel == 'NEG':
+                        poles = ['NEG']
+                    else:
+                        poles = ['POS', 'NEG']
+
+                    for pole in poles:
                         if self._stop_event.is_set():
                             break
 
@@ -824,8 +854,11 @@ class LinearityTab(ttk.Frame):
             self.gpib_scanner.write(f":system:cpon {self.scanner_slot}")
             # 2. リレー安定待ち
             time.sleep(switch_delay / 2)
-            # 3. *OPC?: cpon完了確認
-            self.gpib_scanner.query("*OPC?")
+            # 3. *OPC?: cpon完了確認（pyvisa終端文字警告を抑制）
+            import warnings
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                self.gpib_scanner.query("*OPC?")
             # 4. CLOSE: 対象CH選択
             self.gpib_scanner.write(f"CLOSE ({channel_addr})")
             # 5. CLOSE後安定待ち
