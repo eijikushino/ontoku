@@ -190,6 +190,9 @@ class DCCharTab(ttk.Frame):
         self.var_cal_enabled = tk.BooleanVar(value=False)
         ttk.Checkbutton(opt_row, text="計測前CAL(LBC)",
                         variable=self.var_cal_enabled).pack(side="left")
+        self.var_nplc_enabled = tk.BooleanVar(value=True)
+        ttk.Checkbutton(opt_row, text="測定前NPLC設定",
+                        variable=self.var_nplc_enabled).pack(side="left", padx=(10, 0))
 
         # 結果サマリー（Excelと同じ列順）
         result_frame = ttk.LabelFrame(right, text="結果サマリー", padding=5)
@@ -412,8 +415,9 @@ class DCCharTab(ttk.Frame):
             self._datagen_send("alt s sa")
 
             # DMM設定: NPLC 10 + レンジ設定
-            self.gpib_dmm.write("NPLC 10")
-            time.sleep(0.1)
+            if self.var_nplc_enabled.get():
+                self.gpib_dmm.write("NPLC 10")
+                time.sleep(0.1)
             if test_type == "Position":
                 self.gpib_dmm.write("DCV 1000")
             else:

@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.58] - 2026-04-08
+### 追加
+- Linearity/DC特性: 測定前NPLC設定チェックボックスを実行制御枠に追加
+- チェックOFF時はDMMへのNPLC 10強制書き込みをスキップ
+
 ## [1.57] - 2026-03-31
 ### 追加
 - Linearity: 極性選択（両極/POS/NEG）をDAC設定枠に追加
