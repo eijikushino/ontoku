@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.59] - 2026-04-10
+### 変更
+- Linearity: DataGen DAC値設定コマンドの極性サフィックス(p/n)を省略し、`alt a {HEX} ci/cii`の1行送信に統一
+- Position/LBCともに測定極性に関わらず同一コマンドで設定
+
 ## [1.58] - 2026-04-08
 ### 追加
 - Linearity/DC特性: 測定前NPLC設定チェックボックスを実行制御枠に追加

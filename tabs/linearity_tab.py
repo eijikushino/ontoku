@@ -897,15 +897,8 @@ class LinearityTab(ttk.Frame):
         time.sleep(0.05)
 
     def _datagen_set_value(self, hex_str, ci_cmd, pole_cmd):
-        """DAC値設定（Linearモード時はp/n両方に同じ値を設定）"""
-        if self.pattern_mode.get() == 'Linear':
-            self._datagen_send(f"alt a {hex_str} {ci_cmd} p")
-            self._datagen_send(f"alt a {hex_str} {ci_cmd} n")
-        elif ci_cmd == 'cii':
-            # LBCはNEGでも常にcii pにセット
-            self._datagen_send(f"alt a {hex_str} {ci_cmd} p")
-        else:
-            self._datagen_send(f"alt a {hex_str} {ci_cmd} {pole_cmd}")
+        """DAC値設定（Position/LBCともにp/n省略で1行送信）"""
+        self._datagen_send(f"alt a {hex_str} {ci_cmd}")
 
     def _load_switch_delay(self):
         """スキャナー切替時間を設定ファイルから読み込み"""
