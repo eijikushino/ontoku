@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.60] - 2026-04-10
+### 変更
+- Linearity/DC特性: 「測定前NPLC設定」チェックボックスを削除
+- Linearity: NPLC設定を10→5に変更し、10Vレンジで無条件実行
+- DC特性: NPLC 10を無条件実行に変更
+
 ## [1.59] - 2026-04-10
 ### 変更
 - Linearity: DataGen DAC値設定コマンドの極性サフィックス(p/n)を省略し、`alt a {HEX} ci/cii`の1行送信に統一

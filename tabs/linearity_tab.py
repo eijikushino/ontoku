@@ -214,12 +214,6 @@ class LinearityTab(ttk.Frame):
         self.stop_btn.pack(side=tk.LEFT, padx=2)
         ttk.Button(btn_row, text="実行ログ", command=self._open_log_window, width=10).pack(side=tk.LEFT, padx=2)
 
-        opt_row = ttk.Frame(ctrl_frame)
-        opt_row.pack(fill=tk.X, pady=2)
-        self.var_nplc_enabled = tk.BooleanVar(value=True)
-        ttk.Checkbutton(opt_row, text="測定前NPLC設定",
-                        variable=self.var_nplc_enabled).pack(side=tk.LEFT)
-
         dir_frame = ttk.Frame(ctrl_frame)
         dir_frame.pack(fill=tk.X, pady=2)
         ttk.Label(dir_frame, text="保存先:").pack(side=tk.LEFT)
@@ -574,11 +568,10 @@ class LinearityTab(ttk.Frame):
                 self._datagen_send(f"alt s sa {ci_cmd}")
                 time.sleep(0.1)
 
-                # DMM設定: NPLC + レンジ
-                if self.var_nplc_enabled.get():
-                    self._queue_update('log', ("DMM NPLC 10 設定", "INFO"))
-                    self.gpib_dmm.write("NPLC 10")
-                    time.sleep(0.1)
+                # DMM設定: NPLC 5 + レンジ
+                self._queue_update('log', ("DMM NPLC 5 設定", "INFO"))
+                self.gpib_dmm.write("NPLC 5")
+                time.sleep(0.1)
                 self._queue_update('log', (f"DMM Range: DCV {dmm_range}", "INFO"))
                 self.gpib_dmm.write(f"DCV {dmm_range}")
                 time.sleep(0.3)
