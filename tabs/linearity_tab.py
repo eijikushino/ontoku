@@ -42,6 +42,11 @@ class LinearityTab(ttk.Frame):
         self._update_queue = queue.Queue()
         self._log_window = None
 
+        # Excel COM 排他制御: PNG 出力と merge が同一ファイルへ同時アクセスしないよう
+        # bg スレッド間・bg⇔UI の順序を強制する（低性能 PC での競合対策）
+        self._excel_lock = threading.Lock()
+        self._png_threads = []  # 未完了の PNG 出力スレッド追跡
+
         # 設定変数
         self.pattern_mode = tk.StringVar(value='Ship')
         self.num_points = tk.StringVar(value='64')
@@ -819,6 +824,10 @@ class LinearityTab(ttk.Frame):
                         else linear_pole_results
                     merge_msg = 'merge_ship_xlsx' if is_ship \
                         else 'merge_linear_xlsx'
+                    self._queue_update('log', (
+                        f"[DBG] worker: before merge queue "
+                        f"({merge_msg}, poles={list(pole_results.keys())})",
+                        "INFO"))
                     if len(pole_results) == 2:
                         self._queue_update(merge_msg, pole_results)
                     elif len(pole_results) == 1:
@@ -831,6 +840,8 @@ class LinearityTab(ttk.Frame):
                                 only_data['xlsx_path'] = final
                             except Exception:
                                 pass
+                    self._queue_update('log', (
+                        "[DBG] worker: after merge queue", "INFO"))
 
             # 終了処理
             self._scanner_cpon()
@@ -1527,17 +1538,49 @@ class LinearityTab(ttk.Frame):
     def _export_png_async(self, export_func, data):
         """PNGエクスポートをバックグラウンドスレッドで実行"""
         def _worker():
+            pole = data.get('pole', '?')
+            tid = threading.get_ident()
+            self._queue_update('log', (
+                f"[DBG] png_bg: start pole={pole} tid={tid}", "INFO"))
             import pythoncom
             pythoncom.CoInitialize()
             try:
-                png_path = export_func(data)
+                # Excel COM 操作は全て同一ロックで直列化
+                self._queue_update('log', (
+                    f"[DBG] png_bg: lock wait pole={pole}", "INFO"))
+                with self._excel_lock:
+                    self._queue_update('log', (
+                        f"[DBG] png_bg: lock acquired pole={pole}", "INFO"))
+                    png_path = export_func(data)
+                self._queue_update('log', (
+                    f"[DBG] png_bg: lock released pole={pole} path={png_path}",
+                    "INFO"))
                 if png_path:
                     self.after(0, lambda: self.log(
                         f"  PNG保存: {png_path}", "SUCCESS"))
                     self.after(0, lambda: self._show_png(png_path))
             finally:
                 pythoncom.CoUninitialize()
-        threading.Thread(target=_worker, daemon=True).start()
+                self._queue_update('log', (
+                    f"[DBG] png_bg: end pole={pole} tid={tid}", "INFO"))
+        t = threading.Thread(target=_worker, daemon=True)
+        self._png_threads.append(t)
+        t.start()
+
+    def _wait_png_threads(self, timeout=60.0):
+        """進行中の PNG 出力 bg スレッド完了を待つ (merge 前に呼ぶ)"""
+        pending = [t for t in self._png_threads if t.is_alive()]
+        if not pending:
+            return
+        self._queue_update('log', (
+            f"[DBG] wait_png: joining {len(pending)} thread(s)", "INFO"))
+        for t in pending:
+            t.join(timeout=timeout)
+        # 終了したスレッドはリストから除去
+        self._png_threads[:] = [
+            t for t in self._png_threads if t.is_alive()]
+        self._queue_update('log', (
+            f"[DBG] wait_png: done (残 {len(self._png_threads)})", "INFO"))
 
     def _show_png(self, png_path):
         """PNGファイルをウィンドウで表示"""
@@ -1648,17 +1691,24 @@ class LinearityTab(ttk.Frame):
         if os.path.exists(png_abs):
             os.remove(png_abs)
 
+        def _dbg(msg):
+            self._queue_update('log', (
+                f"[DBG] linear_png({pole}): {msg}", "INFO"))
+
         try:
             import win32com.client
 
+            _dbg("DispatchEx")
             excel = win32com.client.DispatchEx("Excel.Application")
             excel.DisplayAlerts = False
             try:
                 xlsx_abs = os.path.normpath(os.path.abspath(xlsx_path))
+                _dbg(f"Open {os.path.basename(xlsx_abs)}")
                 # _tmp.xlsxがmergeで削除済みの場合、統合先にフォールバック
                 try:
                     wb = excel.Workbooks.Open(xlsx_abs)
-                except Exception:
+                except Exception as e_open:
+                    _dbg(f"Open failed ({e_open}) — fallback")
                     if '_tmp.xlsx' in xlsx_path:
                         xlsx_path = xlsx_path.replace('_tmp.xlsx', '.xlsx')
                         xlsx_abs = os.path.normpath(
@@ -1677,6 +1727,7 @@ class LinearityTab(ttk.Frame):
                             break
                     if ws is None:
                         ws = wb.Sheets(1)
+                    _dbg("LBC ChartObjects(1)")
                     chart = ws.ChartObjects(1).Chart
                 else:
                     # Position: チャートシートを名前で検索
@@ -1688,21 +1739,30 @@ class LinearityTab(ttk.Frame):
                             break
                     if chart is None:
                         chart = wb.Charts(1)
+                    _dbg("Position Visible=True")
                     excel.Visible = True
+                    _dbg("Position Activate")
                     chart.Activate()
                     time.sleep(0.5)
+                    _dbg("Position Activate done")
 
                 # NG時はチャート背景を薄い黄色に
                 if data.get('results', {}).get('ng', False):
+                    _dbg("NG Save")
                     chart.PlotArea.Interior.Color = 13434879  # RGB(255,255,204)
                     wb.Save()
 
+                _dbg("chart.Export")
                 chart.Export(png_abs, "PNG")
+                _dbg("chart.Export done")
 
+                _dbg("wb.Close")
                 wb.Close(False)
             finally:
+                _dbg("excel.Quit")
                 excel.Visible = False
                 excel.Quit()
+                _dbg("excel.Quit done")
 
             if os.path.exists(png_abs) and os.path.getsize(png_abs) > 0:
                 return chart_png
@@ -1712,78 +1772,141 @@ class LinearityTab(ttk.Frame):
             self.log(f"  PNGエクスポートエラー: {e}", "WARNING")
             return None
 
+    def _dispatch_merge_async(self, merge_func, pole_results):
+        """
+        merge を bg スレッドで実行する。
+        1) 進行中の PNG 出力スレッドを join (順序保証)
+        2) _excel_lock を取得 (同時 Excel COM 禁止)
+        3) merge_func を呼び出す
+        UI スレッドをブロックせずに Excel COM 競合を排除する。
+        """
+        def _worker():
+            import pythoncom
+            pythoncom.CoInitialize()
+            try:
+                self._queue_update('log', (
+                    "[DBG] merge_bg: wait png threads", "INFO"))
+                self._wait_png_threads()
+                self._queue_update('log', (
+                    "[DBG] merge_bg: lock wait", "INFO"))
+                with self._excel_lock:
+                    self._queue_update('log', (
+                        "[DBG] merge_bg: lock acquired", "INFO"))
+                    merge_func(pole_results)
+                self._queue_update('log', (
+                    "[DBG] merge_bg: lock released", "INFO"))
+            finally:
+                pythoncom.CoUninitialize()
+                self._queue_update('log', (
+                    "[DBG] merge_bg: end", "INFO"))
+        threading.Thread(target=_worker, daemon=True).start()
+
     def _merge_linear_xlsx(self, pole_results):
         """Linear/Random/File: POS/NEGのXLSXを1ファイルに統合
-        NEGの全シートをPOSファイルにコピー"""
+        NEGの全シートをPOSファイルにコピー
+        (bg スレッドから呼ばれる想定: ログは _queue_update で UI に投げる)"""
         pos_xlsx = pole_results.get('POS', {}).get('xlsx_path')
         neg_xlsx = pole_results.get('NEG', {}).get('xlsx_path')
 
         if not pos_xlsx or not neg_xlsx:
             return
 
+        def _dbg(msg):
+            self._queue_update(
+                'log', (f"[DBG] merge_linear: {msg}", "INFO"))
+
         try:
             import win32com.client
 
+            _dbg("DispatchEx")
             excel = win32com.client.DispatchEx("Excel.Application")
             excel.Visible = False
             excel.DisplayAlerts = False
             try:
+                _dbg(f"Open POS {os.path.basename(pos_xlsx)}")
                 wb_pos = excel.Workbooks.Open(os.path.abspath(pos_xlsx))
+                _dbg(f"Open NEG {os.path.basename(neg_xlsx)}")
                 wb_neg = excel.Workbooks.Open(os.path.abspath(neg_xlsx))
 
                 # NEGのデータシートをPOSファイルにコピー
-                for i in range(1, wb_neg.Sheets.Count + 1):
+                sheet_count = wb_neg.Sheets.Count
+                _dbg(f"Copy {sheet_count} sheets NEG->POS")
+                for i in range(1, sheet_count + 1):
                     wb_neg.Sheets(i).Copy(
                         None, wb_pos.Sheets(wb_pos.Sheets.Count))
 
+                _dbg("Save POS")
                 wb_pos.Save()
+                _dbg("Close NEG")
                 wb_neg.Close(False)
+                _dbg("Close POS")
                 wb_pos.Close(False)
             finally:
+                _dbg("excel.Quit")
                 excel.Quit()
+                _dbg("excel.Quit done")
 
-            # NEG一時ファイル削除（PNG非同期エクスポートと競合するため遅延）
-            self._delayed_delete(neg_xlsx)
+            # NEG 一時ファイル削除 (after で UI スレッド経由 → リトライも安全)
+            _dbg("delayed delete NEG tmp")
+            self.after(0, lambda p=neg_xlsx: self._delayed_delete(p))
 
-            self.log(f"  XLSX統合完了: {pos_xlsx}", "SUCCESS")
+            self._queue_update(
+                'log', (f"  XLSX統合完了: {pos_xlsx}", "SUCCESS"))
 
         except Exception as e:
-            self.log(f"  XLSX統合エラー: {e}", "WARNING")
+            self._queue_update(
+                'log', (f"  XLSX統合エラー: {e}", "WARNING"))
 
     def _merge_ship_xlsx(self, pole_results):
-        """POS/NEGのXLSXを1ファイルに統合 (PNGは各pole完了時に既にエクスポート済み)"""
+        """POS/NEGのXLSXを1ファイルに統合 (PNGは各pole完了時に既にエクスポート済み)
+        (bg スレッドから呼ばれる想定: ログは _queue_update で UI に投げる)"""
         pos_xlsx = pole_results.get('POS', {}).get('xlsx_path')
         neg_xlsx = pole_results.get('NEG', {}).get('xlsx_path')
 
         if not pos_xlsx or not neg_xlsx:
             return
 
+        def _dbg(msg):
+            self._queue_update('log', (f"[DBG] merge_ship: {msg}", "INFO"))
+
         try:
             import win32com.client
 
+            _dbg("DispatchEx")
             excel = win32com.client.DispatchEx("Excel.Application")
             excel.Visible = False
             excel.DisplayAlerts = False
             try:
+                _dbg(f"Open POS {os.path.basename(pos_xlsx)}")
                 wb_pos = excel.Workbooks.Open(os.path.abspath(pos_xlsx))
+                _dbg(f"Open NEG {os.path.basename(neg_xlsx)}")
                 wb_neg = excel.Workbooks.Open(os.path.abspath(neg_xlsx))
 
                 # NEGシートをPOSファイルにコピー
+                _dbg("Copy sheet NEG->POS")
                 wb_neg.Sheets(1).Copy(None, wb_pos.Sheets(wb_pos.Sheets.Count))
 
+                _dbg("Save POS")
                 wb_pos.Save()
+                _dbg("Close NEG")
                 wb_neg.Close(False)
+                _dbg("Close POS")
                 wb_pos.Close(False)
             finally:
+                _dbg("excel.Quit")
                 excel.Quit()
+                _dbg("excel.Quit done")
 
-            # NEG一時ファイル削除（PNG非同期エクスポートと競合するため遅延）
-            self._delayed_delete(neg_xlsx)
+            # NEG 一時ファイル削除 (after で UI スレッド経由)
+            _dbg("delayed delete NEG tmp")
+            self.after(0, lambda p=neg_xlsx: self._delayed_delete(p))
 
-            self.log(f"  XLSX統合完了: {pos_xlsx}", "SUCCESS")
+            self._queue_update(
+                'log', (f"  XLSX統合完了: {pos_xlsx}", "SUCCESS"))
 
         except Exception as e:
-            self.log(f"  XLSX統合エラー: {e}", "WARNING")
+            self._queue_update(
+                'log', (f"  XLSX統合エラー: {e}", "WARNING"))
 
     # ==================== 更新キュー・ポーリング ====================
     def _queue_update(self, msg_type, data):
@@ -1818,7 +1941,10 @@ class LinearityTab(ttk.Frame):
                     self._export_png_async(
                         self._save_graph_linear_png, data)
                 elif msg_type == 'merge_linear_xlsx':
-                    self._merge_linear_xlsx(data)
+                    self.log(
+                        "[DBG] poll: merge_linear_xlsx dispatch bg", "INFO")
+                    self._dispatch_merge_async(
+                        self._merge_linear_xlsx, data)
                 elif msg_type == 'ship_pole_done':
                     tag = 'ng' if data['judge'] == 'NG' else 'ok'
                     self.summary_tree.insert('', 'end', values=(
@@ -1829,7 +1955,10 @@ class LinearityTab(ttk.Frame):
                     self._export_png_async(
                         self._save_graph_ship_png, data)
                 elif msg_type == 'merge_ship_xlsx':
-                    self._merge_ship_xlsx(data)
+                    self.log(
+                        "[DBG] poll: merge_ship_xlsx dispatch bg", "INFO")
+                    self._dispatch_merge_async(
+                        self._merge_ship_xlsx, data)
                 elif msg_type == 'done':
                     self._finish()
                     return

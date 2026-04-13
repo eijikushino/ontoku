@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.63] - 2026-04-13
+### 修正
+- Linearity 両極測定: NEG 計測終了後に Excel グラフ表示でフリーズする問題を修正
+  - 原因: PNG 出力 bg スレッドと merge が同じ xlsx に同時 Excel COM アクセスしていた
+  - 低性能 PC では PNG 出力が完了する前に merge が走り、STA/ファイルロックで競合
+  - PNG 出力と merge を `_excel_lock` で直列化し、merge 前に PNG bg スレッドを join
+  - merge を bg スレッド化して UI スレッドを解放
+### 追加
+- Linearity: Excel COM 処理全般に `[DBG]` プレフィックスのデバッグログを追加
+  - 固まる箇所の特定用（png_bg / merge_bg / linear_png / merge_linear / merge_ship の各段階）
+
 ## [1.62] - 2026-04-13
 ### 変更
 - Linearity Sequential: NEG 測定の DAC 値順序を反転（実機未検証）

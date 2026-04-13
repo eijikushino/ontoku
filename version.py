@@ -1,5 +1,5 @@
 # version.py
-__version__ = "1.62"
+__version__ = "1.63"
 __build_date__ = "2026-04-13"
 
 def get_version_string():
