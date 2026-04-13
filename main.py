@@ -57,13 +57,17 @@ class MainApplication(tk.Tk):
         self.graph_tab = GraphTab(content, self.gpib_3458a)
         self.dac_tab = DACTab(content, self.gpib_3499b, self.serial_manager)
         self.datagen_tab = DataGenTab(content, self.datagen_manager, self.datagen_manager2)
-        self.file_tab = FileTab(content)
         self.dmm3458a_tab = DMM3458ATab(content, self.gpib_3458a)
         self.scanner_tab = ScannerTab(content, self.gpib_3499b)
         self.linearity_tab = LinearityTab(content, self.gpib_3458a, self.gpib_3499b,
                                            self.datagen_manager, self.test_tab)
         self.dc_char_tab = DCCharTab(content, self.gpib_3458a, self.gpib_3499b,
                                       self.datagen_manager, self.serial_manager, self.test_tab)
+        # FileTab は Linearity/DC特性 の save_dir を共有するため最後に生成
+        self.file_tab = FileTab(content,
+                                linearity_tab=self.linearity_tab,
+                                dc_char_tab=self.dc_char_tab,
+                                test_tab=self.test_tab)
 
         # TestタブにDACタブのDEF選択状態を共有
         self.test_tab.set_def_vars(self.dac_tab.def_vars)

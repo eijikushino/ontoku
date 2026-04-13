@@ -2,6 +2,22 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.61] - 2026-04-13
+### 追加
+- ファイル保存タブ: 各保存先にファイル名サンプル（動的生成）をグレー表示
+  - Pattern Test: 保存先 + CSV 名を結合したフルパス
+  - Linearity: S/N・DAC・極性・モード・計測点数を反映（.xlsx / .png）
+  - DC特性: S/N・試験種別を反映（.xlsx / .png）
+- 複数 DEF 選択時は `[DFH903|DFH904|...]` 形式で S/N を列挙
+### 改善
+- ファイル保存タブ: 保存先セクションに Pattern Test(温特)/Linearity/DC特性 の 3 種を統合
+- Linearity/DC特性 の保存先は各個別タブと StringVar を共有し両方向同期
+- 薄い青の装飾枠を撤去、DEF S/N 行間を詰めてコンパクト化
+- CSV ファイル名を Pattern Test 保存先の直下に移動
+- 参照ボタンのダイアログ初期パスを現在の指定先に変更
+### 修正
+- Linearity ファイル名例の Ship モード表記を `出荷Sequence` に修正
+
 ## [1.60] - 2026-04-10
 ### 変更
 - Linearity/DC特性: 「測定前NPLC設定」チェックボックスを削除
