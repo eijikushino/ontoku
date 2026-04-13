@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.62] - 2026-04-13
+### 変更
+- Linearity Sequential: NEG 測定の DAC 値順序を反転（実機未検証）
+  - POS/NEG とも出力電圧として -V → +V 方向で測定されるように揃えた
+  - 分析側は DAC 値で昇順ソートしているため結果ファイルへの影響なし
+
 ## [1.61] - 2026-04-13
 ### 追加
 - ファイル保存タブ: 各保存先にファイル名サンプル（動的生成）をグレー表示

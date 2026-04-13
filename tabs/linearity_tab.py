@@ -455,7 +455,12 @@ class LinearityTab(ttk.Frame):
             if n <= 1:
                 return [0]
             step = max_val / (n - 1)
-            return [min(int(round(i * step)), max_val) for i in range(n)]
+            vals = [min(int(round(i * step)), max_val) for i in range(n)]
+            # Sequential の NEG は POS と逆順に測定し、
+            # 出力電圧として -V → +V の方向で POS/NEG を揃える
+            if pole == 'NEG':
+                vals.reverse()
+            return vals
         else:  # Random (VBAマクロ準拠: 未ソート、重複許可)
             return [random.randint(0, max_val) for _ in range(n)]
 
