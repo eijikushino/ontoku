@@ -547,65 +547,121 @@ class DCCharTab(ttk.Frame):
     def _cal_all_defs(self, selected_defs):
         """全DEFに一斉CAL送信 → ラウンドロビンポーリングで全完了待ち。
         戻り値: True=全OK, False=いずれかNG/TIMEOUT
+
+        [DBG] cal プレフィックスで実時系列を可視化:
+          - 各 cal/cal s コマンド送信直前のタイムスタンプ
+          - 装置の生応答 (repr で改行・空白を可視化)
+          - 完了判定したトリガ応答と所要秒
+          - 全 DEF 完了時の総所要秒
         """
         if not self.serial_mgr or not self.serial_mgr.is_connected():
             self._update_queue.put(('log', "[CAL] シリアル未接続"))
             return False
 
+        def _now():
+            ms = int(time.time() * 1000) % 1000
+            return time.strftime("%H:%M:%S") + f".{ms:03d}"
+
+        def _dbg(msg):
+            self._update_queue.put(('log', f"[DBG] cal {_now()} {msg}"))
+
+        t_start = time.time()
+        _dbg(f"BEGIN _cal_all_defs DEFs={[d['index'] for d in selected_defs]}")
+
+        # 0. 開始前の sticky 状態を確認
+        # CAL 送信前に cal s が complete を返してきたら、装置側に
+        # 前回 CAL の sticky flag が残っている可能性が高い
+        # (部分一致判定が誤発火する原因の検証)
+        _dbg("--- pre-send sticky check ---")
+        for def_info in selected_defs:
+            di = def_info['index']
+            pre_cmd = f"DEF {di} cal s"
+            _dbg(f"PRE-SEND DEF{di}: {pre_cmd}")
+            pre_resp = self.serial_mgr.send_command_with_response(
+                pre_cmd, wait_sec=0.1, read_timeout=1.0)
+            _dbg(f"PRE-RECV DEF{di}: {pre_resp!r}")
+
         # 1. 全DEFにcal一斉送信
-        pending = {}  # {def_index: "waiting"}
+        _dbg("--- send cal commands ---")
+        pending = {}  # {def_index: t_send}
         for def_info in selected_defs:
             di = def_info['index']
             cmd = f"DEF {di} cal"
+            _dbg(f"SEND DEF{di}: {cmd}")
             self._update_queue.put(('log', f"[DEF] SEND: {cmd}"))
             self.serial_mgr.send_command(cmd)
             time.sleep(0.3)
-            pending[di] = "waiting"
+            pending[di] = time.time()
 
-        # 2. ラウンドロビンポーリング（3秒間隔、最大120秒）
+        # 2. ラウンドロビンポーリング (3秒間隔、最大240秒)
+        _dbg("--- poll loop start ---")
         max_wait = 240
         elapsed = 0
         poll_interval = 3
+        poll_round = 0
         while elapsed < max_wait and pending:
             if self._stop_event.is_set():
+                _dbg("STOP event during poll loop")
                 return False
             time.sleep(poll_interval)
             elapsed += poll_interval
+            poll_round += 1
+            _dbg(f"poll round #{poll_round} elapsed={elapsed}s "
+                 f"pending={list(pending.keys())}")
 
             for di in list(pending.keys()):
                 if self._stop_event.is_set():
+                    _dbg("STOP event in poll inner loop")
                     return False
                 status_cmd = f"DEF {di} cal s"
+                _dbg(f"SEND DEF{di}: {status_cmd}")
                 response = self.serial_mgr.send_command_with_response(
                     status_cmd, wait_sec=0.1, read_timeout=1.0
                 )
+                _dbg(f"RECV DEF{di}: {response!r}")
                 self._update_queue.put(('log', f"[DEF] SEND: {status_cmd}"))
                 if response:
                     self._update_queue.put(('log', f"[DEF] RECV: {response}"))
                     resp_lower = response.lower()
                     if "complete" in resp_lower:
-                        self._update_queue.put(('log', f"[CAL] DEF{di} → 完了 (OK)"))
+                        dt = time.time() - pending[di]
+                        _dbg(f"DEF{di} matched 'complete' in {dt:.2f}s")
+                        self._update_queue.put((
+                            'log', f"[CAL] DEF{di} → 完了 (OK, {dt:.1f}s)"))
                         del pending[di]
                     elif "failed" in resp_lower or "error" in resp_lower:
-                        self._update_queue.put(('log', f"[CAL] DEF{di} → 失敗 (NG)"))
+                        _dbg(f"DEF{di} matched failed/error")
+                        self._update_queue.put((
+                            'log', f"[CAL] DEF{di} → 失敗 (NG)"))
                         self._update_queue.put(('progress', f"CAL DEF{di} NG"))
                         return False
-                    elif "in excution" in resp_lower or "executing" in resp_lower:
-                        pass  # 継続
+                    elif ("in excution" in resp_lower
+                          or "executing" in resp_lower):
+                        _dbg(f"DEF{di} still executing")
+                    else:
+                        _dbg(f"DEF{di} unmatched response (continue)")
+                else:
+                    _dbg(f"DEF{di} empty response (continue)")
 
             # 進捗表示
             done = len(selected_defs) - len(pending)
             names = [f"DEF{di}" for di in pending]
             self._update_queue.put(('progress',
-                f"CAL {done}/{len(selected_defs)}完了 待機中:{','.join(names)} ({elapsed}s/{max_wait}s)"))
+                f"CAL {done}/{len(selected_defs)}完了 "
+                f"待機中:{','.join(names)} ({elapsed}s/{max_wait}s)"))
 
         if pending:
             for di in pending:
-                self._update_queue.put(('log', f"[CAL] DEF{di} → タイムアウト ({max_wait}s)"))
+                _dbg(f"DEF{di} TIMEOUT after {max_wait}s")
+                self._update_queue.put((
+                    'log', f"[CAL] DEF{di} → タイムアウト ({max_wait}s)"))
             self._update_queue.put(('progress', f"CAL タイムアウト"))
             return False
 
-        self._update_queue.put(('log', f"[CAL] 全DEF完了 (OK)"))
+        total = time.time() - t_start
+        _dbg(f"END _cal_all_defs OK total={total:.2f}s")
+        self._update_queue.put((
+            'log', f"[CAL] 全DEF完了 (OK, total {total:.1f}s)"))
         self._update_queue.put(('progress', f"CAL 全DEF完了"))
         return True
 
@@ -633,17 +689,31 @@ class DCCharTab(ttk.Frame):
             self._update_queue.put(('log', f""))
             self._update_queue.put(('log', f"===== LBC ATT {att} ====="))
             self._update_queue.put(('progress', f"LBC ATT {att} に切替"))
+
+            def _latt_dbg(msg):
+                ms = int(time.time() * 1000) % 1000
+                ts = time.strftime("%H:%M:%S") + f".{ms:03d}"
+                self._update_queue.put((
+                    'log', f"[DBG] latt {ts} {msg}"))
+
+            _latt_dbg(f"BEGIN ATT={att} latt_val={latt_val}")
             # 全DEFにLATT送信
             if self.serial_mgr and self.serial_mgr.is_connected():
                 for def_info in selected_defs:
-                    latt_cmd = f"DEF {def_info['index']} LATT {latt_val}"
+                    di = def_info['index']
+                    latt_cmd = f"DEF {di} LATT {latt_val}"
+                    _latt_dbg(f"SEND DEF{di}: {latt_cmd}")
                     self._update_queue.put(('log', f"[DEF] SEND: {latt_cmd}"))
                     response = self.serial_mgr.send_command_with_response(
                         latt_cmd, wait_sec=0.1, read_timeout=0.5
                     )
+                    _latt_dbg(f"RECV DEF{di}: {response!r}")
                     if response:
-                        self._update_queue.put(('log', f"[DEF] RECV: {response}"))
+                        self._update_queue.put((
+                            'log', f"[DEF] RECV: {response}"))
+            _latt_dbg("sleep 0.2 before CAL")
             time.sleep(0.2)
+            _latt_dbg("END LATT phase, entering CAL phase")
 
             # ===== 2. CAL（一斉送信→ラウンドロビンポーリング） =====
             cal_failed = False
@@ -671,6 +741,8 @@ class DCCharTab(ttk.Frame):
 
             if self._stop_event.is_set():
                 break
+
+            _latt_dbg(f"CAL phase done, entering MEASURE phase ATT={att}")
 
             # ATT区切り行をサマリーに表示
             self._update_queue.put(('row', (
@@ -1118,7 +1190,14 @@ class DCCharTab(ttk.Frame):
 
     # ==================== PNG生成（Excel COM経由スクリーンショット） ====================
     def _generate_table_png(self, sheet_name, data, save_dir, serial_no, timestamp):
-        """XLSXを開いて表範囲をCopyPicture→PNG保存"""
+        """XLSXを開いて表範囲をCopyPicture→PNG保存
+
+        低性能 PC でフリーズする問題への対策:
+        - DispatchEx で毎回新規 Excel.exe を起動 (前回の Quit 待ちのゾンビ回避)
+        - CoInitialize/CoUninitialize の try/finally を正しく対応付け
+        - クリップボード取得は短いリトライ (CopyPicture の遅延吸収)
+        - 各 Excel COM ステップを [DBG] ログで出力
+        """
         sheet_titles = {'position': 'POSTION', 'lbc': 'LBC', 'moni': 'moni'}
         sheet_title = sheet_titles.get(sheet_name, sheet_name)
 
@@ -1128,43 +1207,82 @@ class DCCharTab(ttk.Frame):
         if not os.path.exists(xlsx_path):
             return png_path
 
+        def _dbg(msg):
+            self._update_queue.put((
+                'log', f"[DBG] dc_png({serial_no}/{sheet_title}): {msg}"))
+
         try:
             import win32com.client
             from PIL import ImageGrab
             import pythoncom
+
+            _dbg("CoInitialize")
             pythoncom.CoInitialize()
-
-            excel = win32com.client.Dispatch("Excel.Application")
-            excel.Visible = False
-            excel.DisplayAlerts = False
             try:
-                wb = excel.Workbooks.Open(os.path.abspath(xlsx_path))
-                ws = wb.Sheets(1)
+                _dbg("DispatchEx")
+                excel = win32com.client.DispatchEx("Excel.Application")
+                excel.Visible = False
+                excel.DisplayAlerts = False
+                try:
+                    _dbg(f"Open {os.path.basename(xlsx_path)}")
+                    wb = excel.Workbooks.Open(os.path.abspath(xlsx_path))
+                    ws = wb.Sheets(1)
 
-                # 表範囲
-                if sheet_name == 'position':
-                    last_row = 25   # 1 header + 24 data
-                    last_col = 'H'  # 8列
-                elif sheet_name == 'moni':
-                    last_row = 17   # 1 header + 16 data
-                    last_col = 'H'  # 8列
-                else:  # lbc
-                    last_row = 25   # 1 header + 24 data
-                    last_col = 'I'  # 9列
+                    # 表範囲
+                    if sheet_name == 'position':
+                        last_row = 25   # 1 header + 24 data
+                        last_col = 'H'  # 8列
+                    elif sheet_name == 'moni':
+                        last_row = 17   # 1 header + 16 data
+                        last_col = 'H'  # 8列
+                    else:  # lbc
+                        last_row = 25   # 1 header + 24 data
+                        last_col = 'I'  # 9列
 
-                rng = ws.Range(f"A1:{last_col}{last_row}")
-                rng.CopyPicture(Appearance=1, Format=2)  # xlScreen, xlBitmap
-                import time as _time
-                _time.sleep(0.3)
-                img = ImageGrab.grabclipboard()
-                if img:
-                    img.save(os.path.abspath(png_path))
+                    _dbg(f"CopyPicture A1:{last_col}{last_row}")
+                    rng = ws.Range(f"A1:{last_col}{last_row}")
+                    rng.CopyPicture(Appearance=1, Format=2)  # xlScreen, xlBitmap
 
-                wb.Close(False)
+                    # クリップボード取得（低性能 PC 対策: 0.1s × 最大 20 回）
+                    _dbg("grabclipboard wait")
+                    img = None
+                    for attempt in range(20):
+                        time.sleep(0.1)
+                        try:
+                            img = ImageGrab.grabclipboard()
+                        except Exception as e_clip:
+                            _dbg(f"grabclipboard exception #{attempt}: {e_clip}")
+                            img = None
+                        if img is not None:
+                            _dbg(f"grabclipboard ok at #{attempt}")
+                            break
+
+                    if img:
+                        _dbg("img.save")
+                        img.save(os.path.abspath(png_path))
+                        _dbg("img.save done")
+                    else:
+                        _dbg("grabclipboard None after retries")
+                        self._update_queue.put((
+                            'log',
+                            f"[DC特性] PNG: クリップボード取得失敗 "
+                            f"({serial_no}/{sheet_title})"))
+
+                    _dbg("wb.Close")
+                    wb.Close(False)
+                finally:
+                    _dbg("excel.Quit")
+                    try:
+                        excel.Quit()
+                    except Exception as e_q:
+                        _dbg(f"excel.Quit error: {e_q}")
+                    _dbg("excel.Quit done")
             finally:
-                excel.Quit()
+                _dbg("CoUninitialize")
                 pythoncom.CoUninitialize()
+                _dbg("CoUninitialize done")
         except Exception as e:
-            print(f"[DC特性] PNG生成エラー: {e}")
+            self._update_queue.put((
+                'log', f"[DC特性] PNG生成エラー: {e}"))
 
         return png_path

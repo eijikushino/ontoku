@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.64] - 2026-04-14
+### 修正
+- DC特性: Excel&PNG保存時のフリーズ対策
+  - `Dispatch` → `DispatchEx` で毎回新規 Excel.exe 起動 (ゾンビ Excel 接続防止)
+  - `pythoncom.CoInitialize/CoUninitialize` の try/finally を正しい入れ子に
+  - クリップボード取得を 0.1s × 最大 20 回リトライに変更
+  - `print()` だったエラー出力を操作ログへ
+### 追加
+- DC特性: PNG 生成 Excel COM 各ステップに `[DBG] dc_png` ログ
+- DC特性: LBC 計測前 CAL の挙動調査用に詳細デバッグログを追加
+  - `[DBG] cal`: CAL 送信前の sticky 状態確認 / 各 cal s 応答の生 repr / 完了所要秒 / 総所要秒
+  - `[DBG] latt`: ATT 切替フェーズの SEND/RECV / CAL phase 移行マーカー / MEASURE phase 移行マーカー
+
 ## [1.63] - 2026-04-13
 ### 修正
 - Linearity 両極測定: NEG 計測終了後に Excel グラフ表示でフリーズする問題を修正
