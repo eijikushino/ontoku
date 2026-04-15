@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.66] - 2026-04-15
+### 修正
+- DEF操作タブ: 3 本以上選択時の ADC 等コマンドでバス競合していた問題を修正
+  - DEF試験プロジェクトの `dac_control_tab` から順次送信ロジックを移植
+  - 単一 DEF は従来どおり即時 write
+  - 複数 DEF は bg スレッドで順次送信、各送信後に `_wait_for_prompt_idle` で応答完了を待つ
+  - `cal`/`test` は idle=5s / max=60s、その他は idle=0.5s / max=10s
+- `_reader_loop` に `>` プロンプト時刻 / データ時刻の追跡を追加
+- 送信前に `flush_input()` で受信バッファクリア
+
 ## [1.65] - 2026-04-15
 ### 修正
 - DC特性 LBC 計測前 CAL: Talking モードを `DEF n r` で reticent-mode に切替

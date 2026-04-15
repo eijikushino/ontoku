@@ -26,6 +26,13 @@ class DACTab(ttk.Frame):
         self._reader_running = False
         self._need_recv_header = False
 
+        # 複数 DEF 順次送信用 (DEF試験 dac_control_tab から移植)
+        # reader が「>」プロンプトを見た時刻 / データを受けた時刻を記録し、
+        # _wait_for_prompt_idle で「プロンプト後 idle_sec 秒無音 = 応答完了」と判定
+        self._last_prompt_time = 0.0
+        self._last_data_time = 0.0
+        self._prompt_event = threading.Event()
+
         self.create_widgets()
 
         # 常駐リーダースレッド起動
@@ -213,18 +220,27 @@ class DACTab(ttk.Frame):
         return time.strftime("%H:%M:%S") + f".{ms:03d}"
 
     def _send(self, base_command: str):
-        """選択されたDEFに対してコマンド送信"""
+        """選択されたDEFに対してコマンド送信
+
+        - 単一 DEF: 即時 write (従来動作)
+        - 複数 DEF: バックグラウンドスレッドで順次 write + 応答完了待ち
+          (DEF試験 dac_control_tab.py から移植。バス競合回避)
+        """
         if not self.serial_mgr.is_connected():
             messagebox.showwarning("通信エラー", "DEFシリアル: ポート未接続")
             return
 
         defs = self._get_selected_defs()
-        t_loop_start = time.time()
+        if not defs:
+            return
+
         self._append_text(
             f"[DBG] send {self._dbg_ts()} BEGIN base={base_command!r} "
             f"defs={defs}")
 
-        for def_num in defs:
+        if len(defs) == 1:
+            # 単一 DEF: 従来どおり即時 write
+            def_num = defs[0]
             cmd = f"DEF {def_num} {base_command}"
             raw = (cmd + "\r").encode("utf-8")
             self._append_text(
@@ -233,13 +249,54 @@ class DACTab(ttk.Frame):
             self._append_text(f"[SEND] {cmd}")
             try:
                 self._need_recv_header = True
+                self.serial_mgr.flush_input()
                 self.serial_mgr.write(raw)
             except Exception as e:
                 self._append_text(f"[ERROR] write failed: {e}")
+            self._append_text(
+                f"[DBG] send {self._dbg_ts()} END (single)")
+            return
 
-        dt = (time.time() - t_loop_start) * 1000
+        # 複数 DEF: bg スレッドで順次送信 + 応答完了待ち
+        is_long_cmd = base_command in ("cal", "test")
+        idle_sec = 5.0 if is_long_cmd else 0.5
+        max_wait = 60.0 if is_long_cmd else 10.0
+
+        def _bg():
+            t_start = time.time()
+            for def_num in defs:
+                cmd = f"DEF {def_num} {base_command}"
+                raw = (cmd + "\r").encode("utf-8")
+                # 応答完了検出用の時刻をリセット
+                self._last_prompt_time = 0.0
+                self._prompt_event.clear()
+                self._text_queue.put(
+                    f"[DBG] send {self._dbg_ts()} write DEF{def_num} "
+                    f"len={len(raw)} raw={raw!r}")
+                self._text_queue.put(f"[SEND] {cmd}")
+                try:
+                    self._need_recv_header = True
+                    self.serial_mgr.flush_input()
+                    self.serial_mgr.write(raw)
+                except Exception as e:
+                    self._text_queue.put(f"[ERROR] write failed: {e}")
+                    continue
+                # 応答完了 (プロンプト後 idle_sec 秒無音) を待つ
+                ok = self._wait_for_prompt_idle(
+                    idle_sec=idle_sec, max_wait=max_wait)
+                if not ok:
+                    self._text_queue.put(
+                        f"[DBG] send {self._dbg_ts()} DEF{def_num} "
+                        f"wait_for_prompt_idle TIMEOUT "
+                        f"(idle={idle_sec}s max={max_wait}s)")
+            dt = (time.time() - t_start) * 1000
+            self._text_queue.put(
+                f"[DBG] send {self._dbg_ts()} END (bg) took {dt:.1f}ms")
+
+        threading.Thread(target=_bg, daemon=True).start()
         self._append_text(
-            f"[DBG] send {self._dbg_ts()} END loop took {dt:.1f}ms")
+            f"[DBG] send {self._dbg_ts()} dispatched bg "
+            f"idle={idle_sec}s max={max_wait}s")
 
     def _send_manual(self):
         """手動コマンド送信(DEFプレフィックスなし、生コマンド)"""
@@ -346,14 +403,19 @@ class DACTab(ttk.Frame):
                 f"[DBG] recv {ts} chunk len={len(chunk)} raw={preview!r}")
             for ch in chunk:
                 if ch in ("\r", "\n"):
-                    if line_buffer.strip() and self.show_response:
-                        if self._need_recv_header:
-                            self._text_queue.put("[RECV]")
-                            self._need_recv_header = False
-                        self._text_queue.put(line_buffer)
+                    if line_buffer.strip():
+                        if self.show_response:
+                            if self._need_recv_header:
+                                self._text_queue.put("[RECV]")
+                                self._need_recv_header = False
+                            self._text_queue.put(line_buffer)
+                        self._last_data_time = time.time()
                     line_buffer = ""
                     skip_space = False
                 elif ch == ">" and not line_buffer.strip():
+                    # プロンプト検出: 応答完了検出用に時刻を記録
+                    self._last_prompt_time = time.time()
+                    self._prompt_event.set()
                     line_buffer = ""
                     skip_space = True
                 elif skip_space and ch == " ":
@@ -361,6 +423,28 @@ class DACTab(ttk.Frame):
                 else:
                     skip_space = False
                     line_buffer += ch
+                    if line_buffer.strip():
+                        self._last_data_time = time.time()
+
+    def _wait_for_prompt_idle(self, idle_sec: float = 0.5,
+                              max_wait: float = 10.0) -> bool:
+        """「>」受信後 idle_sec 秒間データ無しになるまで待つ。
+
+        複数 DEF 順次送信時に「1つの DEF の応答完了」を検出するために使用。
+        max_wait 秒以内に idle 条件が満たされなければタイムアウトして False。
+        戻り値: True=idle 成立, False=タイムアウト
+        """
+        start = time.time()
+        while time.time() - start < max_wait:
+            pt = self._last_prompt_time
+            dt = self._last_data_time
+            now = time.time()
+            # 送信開始後に「>」が来ていて、その後にデータが来ておらず
+            # かつ idle_sec 経過していれば応答完了
+            if pt > start and pt >= dt and now - pt > idle_sec:
+                return True
+            time.sleep(0.05)
+        return False
 
     def _read_serial_chunk(self):
         """受信バッファの全データを一括読み取り"""
