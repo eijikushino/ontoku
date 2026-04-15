@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.68] - 2026-04-15
+### 修正
+- Linearity試験 NEG側の派生値を VBA オリジナル (DacTestBench5K LINEAR.bas) 準拠に修正
+  - `_save_xlsx_linear` (Position Sequential/Random/File): `vgain = -vgain` を撤去し、常に正の `vgain` と `pole_sign` で計算
+  - 影響: 測定DAC値 (E列)・FIT理論値 (F列)・OFFSET (B4) の符号が VBA と一致
+  - 理論電圧 (C列) は `s_val * vgain * pole_sign` で従来同等、POS側は回帰なし
+  - `_save_xlsx_lbc_random` (LBC Sequential/Random/File): サマリー `gain_lsb`/`offset_lsb` を同方針で修正
+  - LBC データ行はテンプレート公式のまま (変更なし)
+
 ## [1.67] - 2026-04-15
 ### 変更
 - DEF操作タブ: 動作確認完了により `[DBG] send/recv` デバッグログを削除

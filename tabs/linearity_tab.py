@@ -1121,11 +1121,11 @@ class LinearityTab(ttk.Frame):
         b_intercept = (sy * sxx - sx * sxy) / denom
 
         max_val = (1 << bits) - 1  # 65535
-        vgain = span / max_val     # V/LSB (6.18 / 65535)
-        if pole == 'NEG':
-            vgain = -vgain
+        vgain = span / max_val     # V/LSB (常に正、VBA準拠)
+        pole_sign = -1 if pole == 'NEG' else 1
 
-        gain_lsb = m_slope / vgain
+        # VBA準拠: CELL_GAIN = sign*m/vgain, CELL_OFFSET = b/vgain
+        gain_lsb = pole_sign * m_slope / vgain
         offset_lsb = b_intercept / vgain
 
         # MaxErr: テンプレートG列 (endpoint fit, 符号付き)
@@ -1245,9 +1245,8 @@ class LinearityTab(ttk.Frame):
 
         offset_val = 2 ** (bits - 1)
         max_val = (1 << bits) - 1
-        vgain = span / max_val  # V/LSB
-        if pole == 'NEG':
-            vgain = -vgain  # NEG: 入力コードに対して電圧反転
+        vgain = span / max_val  # V/LSB (常に正、VBA準拠)
+        pole_sign = -1 if pole == 'NEG' else 1
 
         # Signed DAC values
         n = len(x_vals)
@@ -1264,8 +1263,8 @@ class LinearityTab(ttk.Frame):
         m = (n * sxy - sx * sy) / denom
         b = (sy * sxx - sx * sxy) / denom
 
-        # GAIN (LSB/LSB), OFFSET (LSB) — VBA準拠
-        gain_lsb = m / vgain
+        # GAIN (LSB/LSB), OFFSET (LSB) — VBA準拠: CELL_GAIN = sign*m/vgain, CELL_OFFSET = b/vgain
+        gain_lsb = pole_sign * m / vgain
         offset_lsb = b / vgain
 
         # Sort by signed DAC value (ascending), preserving original order
@@ -1343,7 +1342,8 @@ class LinearityTab(ttk.Frame):
         max_err = 0.0
         for i, (orig_order, s_val, m_val) in enumerate(data_sorted):
             r = 7 + i
-            theo_v = s_val * vgain
+            # VBA準拠: COUT = sdt*vgain*sign, CIN = mdt/vgain, FITOUT = (m*sdt+b)/vgain
+            theo_v = s_val * vgain * pole_sign
             meas_dac = m_val / vgain
             fit_val = (m * s_val + b) / vgain
             err_lsb = m_val / vgain - fit_val
