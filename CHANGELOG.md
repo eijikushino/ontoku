@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.69] - 2026-04-15
+### 改善
+- 参照/読込ボタン: 既設パスを初期表示に反映 (方式B、全8箇所)
+  - ファイル選択では親フォルダを開き、前回のファイル名を入力欄に自動入力 (ハイライト状態)
+  - フォルダ選択では設定中のフォルダを初期表示、存在しなければ親まで遡る
+  - 共通ヘルパー `utils/browse_helpers.py` (`pick_file` / `pick_directory`) を新設
+  - 対象: Linearity (パターン/保存先)、DC特性 (保存先)、Pattern Test (保存先/読込)、
+    グラフ (CSV/温度CSV読込)、DataGen (カスタムパターン POS/NEG)
+- Pattern Test: 直近に読み込んだパターンファイルを `last_pattern_file` として app_settings.json に永続化
+
 ## [1.68] - 2026-04-15
 ### 修正
 - Linearity試験 NEG側の派生値を VBA オリジナル (DacTestBench5K LINEAR.bas) 準拠に修正

@@ -15,6 +15,7 @@ from dc_char_definitions import (
     LBC_TEST_POINTS,
     MONI_TEST_POINTS, MONI_DISPLAY_ORDER,
 )
+from utils.browse_helpers import pick_directory
 
 
 class DCCharTab(ttk.Frame):
@@ -222,7 +223,7 @@ class DCCharTab(ttk.Frame):
         self.tree.pack(fill="both", expand=True)
 
     def _browse_save_dir(self):
-        d = filedialog.askdirectory(title="保存先ディレクトリ選択")
+        d = pick_directory(self.save_dir.get(), title="保存先ディレクトリ選択")
         if d:
             self.save_dir.set(d)
 

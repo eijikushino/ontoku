@@ -4,6 +4,7 @@ import csv
 import json
 import os
 from utils.graph_plotter import LSBGraphPlotter
+from utils.browse_helpers import pick_file
 
 
 class GraphTab(ttk.Frame):
@@ -369,10 +370,11 @@ class GraphTab(ttk.Frame):
     
     def load_csv_file(self):
         """CSVファイルを選択して読み込み"""
-        # ファイル選択ダイアログ
-        filename = filedialog.askopenfilename(
+        # ファイル選択ダイアログ (前回パスを初期表示)
+        filename = pick_file(
+            self.file_path_var.get(),
             title="CSVファイルを選択",
-            filetypes=[("CSV files", "*.csv"), ("All files", "*.*")]
+            filetypes=[("CSV files", "*.csv"), ("All files", "*.*")],
         )
 
         if not filename:
@@ -488,9 +490,10 @@ class GraphTab(ttk.Frame):
 
     def load_temp_csv_file(self):
         """温度CSVファイルを選択して読み込み"""
-        filename = filedialog.askopenfilename(
+        filename = pick_file(
+            self.temp_file_path_var.get(),
             title="温度CSVファイルを選択",
-            filetypes=[("CSV files", "*.csv"), ("All files", "*.*")]
+            filetypes=[("CSV files", "*.csv"), ("All files", "*.*")],
         )
 
         if not filename:

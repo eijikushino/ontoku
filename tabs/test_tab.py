@@ -1,8 +1,11 @@
 import tkinter as tk
 import time
 import csv
+import os
 from tkinter import ttk, filedialog, messagebox
 from tkinter.scrolledtext import ScrolledText
+
+from utils.browse_helpers import pick_directory, pick_file
 
 class TestTab(ttk.Frame):
     def __init__(self, parent, serial_manager):
@@ -26,6 +29,7 @@ class TestTab(ttk.Frame):
         self.skip_requested = False  # スキップフラグ
         self.def_vars = []  # DEF操作タブから共有するDEF選択状態
         self.save_folder = tk.StringVar(value="")  # 保存フォルダパス
+        self.last_pattern_file = ""  # 直近に読み込んだパターンファイルのフルパス
         
         # ★★★ 計測ウィンドウ管理用 ★★★
         self.measurement_window = None  # 計測ウィンドウのインスタンス
@@ -422,7 +426,7 @@ class TestTab(ttk.Frame):
     
     def select_folder(self):
         """保存先フォルダを選択"""
-        folder = filedialog.askdirectory(title="保存先フォルダを選択")
+        folder = pick_directory(self.save_folder.get(), title="保存先フォルダを選択")
         if folder:
             self.save_folder.set(folder)
             self.save_settings()  # 設定を保存
@@ -474,10 +478,12 @@ class TestTab(ttk.Frame):
     
     def load_pattern(self):
         """CSVファイルからパターンを読込"""
-        filepath = filedialog.askopenfilename(
+        # 前回読み込んだファイルがあればそれを優先、なければ保存先フォルダから開く
+        initial_path = self.last_pattern_file or self.save_folder.get()
+        filepath = pick_file(
+            initial_path,
             title="パターンファイルを選択",
             filetypes=[("CSVファイル", "*.csv"), ("すべてのファイル", "*.*")],
-            initialdir=self.save_folder.get() if self.save_folder.get() else None
         )
         
         if not filepath:
@@ -536,7 +542,8 @@ class TestTab(ttk.Frame):
             self.save_folder.set(folder_path)
             self.filename_entry.delete(0, tk.END)
             self.filename_entry.insert(0, filename_without_ext)
-            
+            self.last_pattern_file = filepath
+
             # 設定を保存
             self.save_settings()
             
@@ -1053,6 +1060,7 @@ class TestTab(ttk.Frame):
                         test_settings = settings['test']
                         self.save_folder.set(test_settings.get('save_folder', ''))
                         self.default_filename = test_settings.get('filename', 'pattern')
+                        self.last_pattern_file = test_settings.get('last_pattern_file', '')
                         
                         # DEFチェック状態を読み込み（追加）
                         if 'def_checks' in test_settings:
@@ -1106,6 +1114,7 @@ class TestTab(ttk.Frame):
             settings['test'] = {
                 'save_folder': self.save_folder.get(),
                 'filename': self.filename_entry.get().strip(),
+                'last_pattern_file': self.last_pattern_file,
                 'def_checks': [var.get() for var in self.def_check_vars],  # 追加
                 'scanner_channels_pos': [ch.get() for ch in self.scanner_channels_pos],
                 'scanner_channels_neg': [ch.get() for ch in self.scanner_channels_neg],

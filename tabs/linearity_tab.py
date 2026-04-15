@@ -12,6 +12,8 @@ import numpy as np
 import openpyxl
 from openpyxl.styles import Font
 
+from utils.browse_helpers import pick_directory, pick_file
+
 
 class LinearityTab(ttk.Frame):
     """Linearity試験タブ - DACの直線性を測定し、最小二乗法で誤差を算出する"""
@@ -377,7 +379,8 @@ class LinearityTab(ttk.Frame):
             self.pts_combo.config(state='readonly')
 
     def _browse_pattern_file(self):
-        path = filedialog.askopenfilename(
+        path = pick_file(
+            self.pattern_file.get(),
             title="パターンファイルを選択",
             filetypes=[("テキストファイル", "*.txt *.csv"), ("すべて", "*.*")])
         if path:
@@ -385,7 +388,7 @@ class LinearityTab(ttk.Frame):
             self._save_settings()
 
     def _browse_save_dir(self):
-        d = filedialog.askdirectory(title="保存先フォルダを選択")
+        d = pick_directory(self.save_dir.get(), title="保存先フォルダを選択")
         if d:
             self.save_dir.set(d)
             self._save_settings()

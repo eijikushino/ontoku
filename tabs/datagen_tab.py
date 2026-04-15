@@ -6,6 +6,7 @@ import re
 import threading
 import queue
 from utils.config_handler import load_config, update_config_value
+from utils.browse_helpers import pick_file
 
 
 class DataGenTab(ttk.Frame):
@@ -1189,8 +1190,10 @@ class DataGenTab(ttk.Frame):
 
     # ========== カスタムパターン送信 ==========
     def _browse_cstm_file(self, target):
-        path = filedialog.askopenfilename(title=f"カスタムパターン({target})ファイルを選択",
-                                          filetypes=[("テキストファイル", "*.txt"), ("すべて", "*.*")])
+        current = self.var_cstm_pos_path.get() if target == "pos" else self.var_cstm_neg_path.get()
+        path = pick_file(current,
+                         title=f"カスタムパターン({target})ファイルを選択",
+                         filetypes=[("テキストファイル", "*.txt"), ("すべて", "*.*")])
         if not path: return
         if target == "pos": self.var_cstm_pos_path.set(path); update_config_value(["datagen_cstm_pos_path"], path)
         else: self.var_cstm_neg_path.set(path); update_config_value(["datagen_cstm_neg_path"], path)
