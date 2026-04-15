@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.67] - 2026-04-15
+### 変更
+- DEF操作タブ: 動作確認完了により `[DBG] send/recv` デバッグログを削除
+  - `_dbg_ts` ヘルパー / `_send` 内の各種 DBG 行 / `_reader_loop` の chunk 受信ログを撤去
+  - 動作ロジック (順次送信・prompt idle 待ち・`flush_input`) はそのまま維持
+
 ## [1.66] - 2026-04-15
 ### 修正
 - DEF操作タブ: 3 本以上選択時の ADC 等コマンドでバス競合していた問題を修正

@@ -214,11 +214,6 @@ class DACTab(ttk.Frame):
         self.show_response = self.var_show_recv.get()
 
     # ---------- コマンド送信 ----------
-    def _dbg_ts(self) -> str:
-        """ミリ秒精度タイムスタンプ (デバッグログ用)"""
-        ms = int(time.time() * 1000) % 1000
-        return time.strftime("%H:%M:%S") + f".{ms:03d}"
-
     def _send(self, base_command: str):
         """選択されたDEFに対してコマンド送信
 
@@ -234,18 +229,11 @@ class DACTab(ttk.Frame):
         if not defs:
             return
 
-        self._append_text(
-            f"[DBG] send {self._dbg_ts()} BEGIN base={base_command!r} "
-            f"defs={defs}")
-
         if len(defs) == 1:
             # 単一 DEF: 従来どおり即時 write
             def_num = defs[0]
             cmd = f"DEF {def_num} {base_command}"
             raw = (cmd + "\r").encode("utf-8")
-            self._append_text(
-                f"[DBG] send {self._dbg_ts()} write DEF{def_num} "
-                f"len={len(raw)} raw={raw!r}")
             self._append_text(f"[SEND] {cmd}")
             try:
                 self._need_recv_header = True
@@ -253,8 +241,6 @@ class DACTab(ttk.Frame):
                 self.serial_mgr.write(raw)
             except Exception as e:
                 self._append_text(f"[ERROR] write failed: {e}")
-            self._append_text(
-                f"[DBG] send {self._dbg_ts()} END (single)")
             return
 
         # 複数 DEF: bg スレッドで順次送信 + 応答完了待ち
@@ -263,16 +249,12 @@ class DACTab(ttk.Frame):
         max_wait = 60.0 if is_long_cmd else 10.0
 
         def _bg():
-            t_start = time.time()
             for def_num in defs:
                 cmd = f"DEF {def_num} {base_command}"
                 raw = (cmd + "\r").encode("utf-8")
                 # 応答完了検出用の時刻をリセット
                 self._last_prompt_time = 0.0
                 self._prompt_event.clear()
-                self._text_queue.put(
-                    f"[DBG] send {self._dbg_ts()} write DEF{def_num} "
-                    f"len={len(raw)} raw={raw!r}")
                 self._text_queue.put(f"[SEND] {cmd}")
                 try:
                     self._need_recv_header = True
@@ -282,21 +264,10 @@ class DACTab(ttk.Frame):
                     self._text_queue.put(f"[ERROR] write failed: {e}")
                     continue
                 # 応答完了 (プロンプト後 idle_sec 秒無音) を待つ
-                ok = self._wait_for_prompt_idle(
+                self._wait_for_prompt_idle(
                     idle_sec=idle_sec, max_wait=max_wait)
-                if not ok:
-                    self._text_queue.put(
-                        f"[DBG] send {self._dbg_ts()} DEF{def_num} "
-                        f"wait_for_prompt_idle TIMEOUT "
-                        f"(idle={idle_sec}s max={max_wait}s)")
-            dt = (time.time() - t_start) * 1000
-            self._text_queue.put(
-                f"[DBG] send {self._dbg_ts()} END (bg) took {dt:.1f}ms")
 
         threading.Thread(target=_bg, daemon=True).start()
-        self._append_text(
-            f"[DBG] send {self._dbg_ts()} dispatched bg "
-            f"idle={idle_sec}s max={max_wait}s")
 
     def _send_manual(self):
         """手動コマンド送信(DEFプレフィックスなし、生コマンド)"""
@@ -395,12 +366,6 @@ class DACTab(ttk.Frame):
             if not chunk:
                 time.sleep(0.01)
                 continue
-            # デバッグ: chunk の生受信ログ (タイムスタンプ + 長さ + repr)
-            ms = int(time.time() * 1000) % 1000
-            ts = time.strftime("%H:%M:%S") + f".{ms:03d}"
-            preview = chunk if len(chunk) <= 120 else chunk[:120] + "..."
-            self._text_queue.put(
-                f"[DBG] recv {ts} chunk len={len(chunk)} raw={preview!r}")
             for ch in chunk:
                 if ch in ("\r", "\n"):
                     if line_buffer.strip():
