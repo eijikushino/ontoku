@@ -473,7 +473,11 @@ class DCCharTab(ttk.Frame):
             saved_files = []
 
             sheet_key = test_type.lower()
-            for def_idx, results in self._results.items():
+            # 選択 DEF を 1 ファイルに集約するため slots_data を先に作る
+            # slots_data: [(serial_no, display_data), ...] 最大 4 枠
+            slots_data: list = []
+            for def_idx in sorted(self._results.keys()):
+                results = self._results[def_idx]
                 sn = self._get_serial_number(def_idx)
                 data = results[sheet_key]
                 if not data:
@@ -481,18 +485,33 @@ class DCCharTab(ttk.Frame):
 
                 # Excel表示順にリオーダー
                 if sheet_key == 'position':
-                    display_data = self._reorder_for_display(data, POSITION_DISPLAY_ORDER)
+                    display_data = self._reorder_for_display(
+                        data, POSITION_DISPLAY_ORDER)
                 elif sheet_key == 'moni':
-                    display_data = self._reorder_for_display(data, MONI_DISPLAY_ORDER)
+                    display_data = self._reorder_for_display(
+                        data, MONI_DISPLAY_ORDER)
                 else:
                     display_data = data
 
-                # XLSX保存
-                xlsx_path = self._save_xlsx_single(sheet_key, display_data, save_dir, sn, timestamp)
+                slots_data.append((sn, display_data))
+
+            # テンプレートは 4 枠固定。それ以上は載らないので警告
+            if len(slots_data) > 4:
+                self._update_queue.put((
+                    'log',
+                    f"[警告] 選択 DEF が {len(slots_data)} 本。"
+                    f"テンプレートは 4 枠まで。5 本目以降は記述されません。"))
+                slots_data = slots_data[:4]
+
+            if slots_data:
+                # XLSX 1 ファイル
+                xlsx_path = self._save_xlsx_single(
+                    sheet_key, slots_data, save_dir, timestamp)
                 saved_files.append(xlsx_path)
 
-                # PNG保存（Excel COMでスクリーンショット）
-                png_path = self._generate_table_png(sheet_key, display_data, save_dir, sn, timestamp)
+                # PNG 1 ファイル (Excel COM でスクリーンショット)
+                png_path = self._generate_table_png(
+                    sheet_key, slots_data, save_dir, timestamp)
                 saved_files.append(png_path)
 
             msg = "保存完了:\n" + "\n".join(saved_files)
@@ -567,6 +586,21 @@ class DCCharTab(ttk.Frame):
 
         t_start = time.time()
         _dbg(f"BEGIN _cal_all_defs DEFs={[d['index'] for d in selected_defs]}")
+
+        # -1. Talkingモード中止 (reticent-mode へ切替)
+        # ※ Talking のままだと CAL 実行中に大量の進捗ログを
+        #    シリアルに垂れ流し、他 DEF の通信が壊れる
+        _dbg("--- reticent-mode ---")
+        for def_info in selected_defs:
+            di = def_info['index']
+            r_cmd = f"DEF {di} r"
+            _dbg(f"SEND DEF{di}: {r_cmd}")
+            self._update_queue.put(('log', f"[DEF] SEND: {r_cmd}"))
+            r_resp = self.serial_mgr.send_command_with_response(
+                r_cmd, wait_sec=0.1, read_timeout=0.5)
+            _dbg(f"RECV DEF{di}: {r_resp!r}")
+            if r_resp:
+                self._update_queue.put(('log', f"[DEF] RECV: {r_resp}"))
 
         # 0. 開始前の sticky 状態を確認
         # CAL 送信前に cal s が complete を返してきたら、装置側に
@@ -853,28 +887,44 @@ class DCCharTab(ttk.Frame):
         return [data[i] for i in order]
 
     # ==================== XLSX保存 ====================
-    def _save_xlsx_single(self, sheet_key, display_data, save_dir, serial_no, timestamp):
-        """XLSX保存（Position/moniは同一ファイルの別シート、LBCは単独ファイル）"""
+    def _save_xlsx_single(self, sheet_key, slots_data, save_dir, timestamp):
+        """XLSX保存 (選択 DEF 全てを 1 ファイルに)
+
+        slots_data: [(serial_no, display_data), ...] 最大 4 枠
+        ファイル名は選択 DEF の S/N を全て `_` で連結する。
+        """
         sheet_titles = {'position': 'POSTION', 'lbc': 'LBC', 'moni': 'moni'}
         sheet_title = sheet_titles.get(sheet_key, sheet_key)
-        filepath = os.path.join(save_dir, f"{serial_no}_DC特性_{sheet_title}_{timestamp}.xlsx")
+        sn_joined = self._join_sns(slots_data)
+        filepath = os.path.join(
+            save_dir, f"{sn_joined}_DC特性_{sheet_title}_{timestamp}.xlsx")
 
         wb = openpyxl.Workbook()
         ws = wb.active
         ws.title = sheet_title
 
         if sheet_key == 'position':
-            self._write_position_sheet(ws, display_data, serial_no)
+            self._write_position_sheet(ws, slots_data)
         elif sheet_key == 'lbc':
-            self._write_lbc_sheet(ws, display_data, serial_no)
+            self._write_lbc_sheet(ws, slots_data)
         else:
-            self._write_moni_sheet(ws, display_data, serial_no)
+            self._write_moni_sheet(ws, slots_data)
 
         wb.save(filepath)
         return filepath
 
-    def _write_position_sheet(self, ws, data, serial_no):
-        """Position XLSX書き込み（docx仕様: 4DEF固定枠、セル結合、右寄せ、数式埋込）"""
+    @staticmethod
+    def _join_sns(slots_data):
+        """slots_data から S/N を順に `_` 連結 (空ならフォールバック)"""
+        if not slots_data:
+            return "unknown"
+        return "_".join(sn for sn, _ in slots_data)
+
+    def _write_position_sheet(self, ws, slots_data):
+        """Position XLSX書き込み（docx仕様: 4DEF固定枠、セル結合、右寄せ、数式埋込）
+
+        slots_data: [(serial_no, display_data), ...] 最大 4 枠
+        """
         thin = Side(style='thin')
         thick = Side(style='medium')
         border_all = Border(top=thin, left=thin, right=thin, bottom=thin)
@@ -900,9 +950,9 @@ class DCCharTab(ttk.Frame):
 
         for slot in range(4):
             base = 2 + slot * 6
-            if slot == 0 and data:
-                slot_data = data
-                unit_label = f"1PB397MK2\n{serial_no}"
+            if slot < len(slots_data):
+                sn_slot, slot_data = slots_data[slot]
+                unit_label = f"1PB397MK2\n{sn_slot}"
             else:
                 slot_data = None
                 unit_label = ""
@@ -978,8 +1028,11 @@ class DCCharTab(ttk.Frame):
         for c, w in {1: 14, 2: 6, 3: 12, 4: 14, 5: 22, 6: 10, 7: 10, 8: 6}.items():
             ws.column_dimensions[openpyxl.utils.get_column_letter(c)].width = w
 
-    def _write_lbc_sheet(self, ws, data, serial_no):
-        """LBC XLSX書き込み（docx仕様: 9列、4DEF固定枠、セル結合、数式埋込、小数3桁）"""
+    def _write_lbc_sheet(self, ws, slots_data):
+        """LBC XLSX書き込み（docx仕様: 9列、4DEF固定枠、セル結合、数式埋込、小数3桁）
+
+        slots_data: [(serial_no, display_data), ...] 最大 4 枠
+        """
         thin = Side(style='thin')
         thick = Side(style='medium')
         border_all = Border(top=thin, left=thin, right=thin, bottom=thin)
@@ -1002,9 +1055,9 @@ class DCCharTab(ttk.Frame):
 
         for slot in range(4):
             base = 2 + slot * 6
-            if slot == 0 and data:
-                slot_data = data
-                unit_label = f"1PB397MK2\n{serial_no}"
+            if slot < len(slots_data):
+                sn_slot, slot_data = slots_data[slot]
+                unit_label = f"1PB397MK2\n{sn_slot}"
             else:
                 slot_data = None
                 unit_label = ""
@@ -1096,8 +1149,11 @@ class DCCharTab(ttk.Frame):
         for c, w in {1: 14, 2: 6, 3: 12, 4: 14, 5: 14, 6: 18, 7: 10, 8: 10, 9: 6}.items():
             ws.column_dimensions[openpyxl.utils.get_column_letter(c)].width = w
 
-    def _write_moni_sheet(self, ws, data, serial_no):
-        """moni XLSX書き込み（docx仕様: 4DEF固定枠、セル結合、右寄せ、数式埋込、小数2桁）"""
+    def _write_moni_sheet(self, ws, slots_data):
+        """moni XLSX書き込み（docx仕様: 4DEF固定枠、セル結合、右寄せ、数式埋込、小数2桁）
+
+        slots_data: [(serial_no, display_data), ...] 最大 4 枠
+        """
         thin = Side(style='thin')
         thick = Side(style='medium')
         border_all = Border(top=thin, left=thin, right=thin, bottom=thin)
@@ -1118,9 +1174,9 @@ class DCCharTab(ttk.Frame):
 
         for slot in range(4):
             base = 2 + slot * 4
-            if slot == 0 and data:
-                slot_data = data
-                unit_label = f"1PB397MK2\n{serial_no}"
+            if slot < len(slots_data):
+                sn_slot, slot_data = slots_data[slot]
+                unit_label = f"1PB397MK2\n{sn_slot}"
             else:
                 slot_data = None
                 unit_label = ""
@@ -1189,8 +1245,11 @@ class DCCharTab(ttk.Frame):
             ws.column_dimensions[openpyxl.utils.get_column_letter(c)].width = w
 
     # ==================== PNG生成（Excel COM経由スクリーンショット） ====================
-    def _generate_table_png(self, sheet_name, data, save_dir, serial_no, timestamp):
+    def _generate_table_png(self, sheet_name, slots_data, save_dir, timestamp):
         """XLSXを開いて表範囲をCopyPicture→PNG保存
+
+        slots_data: [(serial_no, display_data), ...]
+        ファイル名は選択 DEF の S/N を全て `_` 連結 (XLSX と揃える)。
 
         低性能 PC でフリーズする問題への対策:
         - DispatchEx で毎回新規 Excel.exe を起動 (前回の Quit 待ちのゾンビ回避)
@@ -1200,16 +1259,19 @@ class DCCharTab(ttk.Frame):
         """
         sheet_titles = {'position': 'POSTION', 'lbc': 'LBC', 'moni': 'moni'}
         sheet_title = sheet_titles.get(sheet_name, sheet_name)
+        sn_joined = self._join_sns(slots_data)
 
-        xlsx_path = os.path.join(save_dir, f"{serial_no}_DC特性_{sheet_title}_{timestamp}.xlsx")
-        png_path = os.path.join(save_dir, f"{serial_no}_DC特性_{sheet_title}_{timestamp}.png")
+        xlsx_path = os.path.join(
+            save_dir, f"{sn_joined}_DC特性_{sheet_title}_{timestamp}.xlsx")
+        png_path = os.path.join(
+            save_dir, f"{sn_joined}_DC特性_{sheet_title}_{timestamp}.png")
 
         if not os.path.exists(xlsx_path):
             return png_path
 
         def _dbg(msg):
             self._update_queue.put((
-                'log', f"[DBG] dc_png({serial_no}/{sheet_title}): {msg}"))
+                'log', f"[DBG] dc_png({sn_joined}/{sheet_title}): {msg}"))
 
         try:
             import win32com.client

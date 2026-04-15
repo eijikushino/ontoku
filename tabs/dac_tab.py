@@ -207,20 +207,39 @@ class DACTab(ttk.Frame):
         self.show_response = self.var_show_recv.get()
 
     # ---------- コマンド送信 ----------
+    def _dbg_ts(self) -> str:
+        """ミリ秒精度タイムスタンプ (デバッグログ用)"""
+        ms = int(time.time() * 1000) % 1000
+        return time.strftime("%H:%M:%S") + f".{ms:03d}"
+
     def _send(self, base_command: str):
         """選択されたDEFに対してコマンド送信"""
         if not self.serial_mgr.is_connected():
             messagebox.showwarning("通信エラー", "DEFシリアル: ポート未接続")
             return
 
-        for def_num in self._get_selected_defs():
+        defs = self._get_selected_defs()
+        t_loop_start = time.time()
+        self._append_text(
+            f"[DBG] send {self._dbg_ts()} BEGIN base={base_command!r} "
+            f"defs={defs}")
+
+        for def_num in defs:
             cmd = f"DEF {def_num} {base_command}"
+            raw = (cmd + "\r").encode("utf-8")
+            self._append_text(
+                f"[DBG] send {self._dbg_ts()} write DEF{def_num} "
+                f"len={len(raw)} raw={raw!r}")
             self._append_text(f"[SEND] {cmd}")
             try:
                 self._need_recv_header = True
-                self.serial_mgr.write((cmd + "\r").encode("utf-8"))
+                self.serial_mgr.write(raw)
             except Exception as e:
                 self._append_text(f"[ERROR] write failed: {e}")
+
+        dt = (time.time() - t_loop_start) * 1000
+        self._append_text(
+            f"[DBG] send {self._dbg_ts()} END loop took {dt:.1f}ms")
 
     def _send_manual(self):
         """手動コマンド送信(DEFプレフィックスなし、生コマンド)"""
@@ -319,6 +338,12 @@ class DACTab(ttk.Frame):
             if not chunk:
                 time.sleep(0.01)
                 continue
+            # デバッグ: chunk の生受信ログ (タイムスタンプ + 長さ + repr)
+            ms = int(time.time() * 1000) % 1000
+            ts = time.strftime("%H:%M:%S") + f".{ms:03d}"
+            preview = chunk if len(chunk) <= 120 else chunk[:120] + "..."
+            self._text_queue.put(
+                f"[DBG] recv {ts} chunk len={len(chunk)} raw={preview!r}")
             for ch in chunk:
                 if ch in ("\r", "\n"):
                     if line_buffer.strip() and self.show_response:

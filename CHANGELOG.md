@@ -2,6 +2,22 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.65] - 2026-04-15
+### 修正
+- DC特性 LBC 計測前 CAL: Talking モードを `DEF n r` で reticent-mode に切替
+  - 原因: Talking モードの進捗ログがバスを埋め、他 DEF 通信が壊れ、"error" 部分一致で誤 NG 判定
+  - `_cal_all_defs` 冒頭で選択 DEF 全員に `DEF n r` を送信
+### 変更
+- DC特性 出力ファイルを 1 試験 1 ファイルに集約
+  - 選択 DEF 全てを同一 xlsx のユニット枠（2/3/4 番目）に記述
+  - ファイル名に選択 DEF の S/N を全て `_` 連結で含める
+  - 5 本以上選択時は先頭 4 本に切り詰め + 警告ログ
+### 追加
+- DEF操作タブ `_send` / `_reader_loop` にデバッグログ
+  - 送信側: `[DBG] send` で write のタイムスタンプ・bytes repr・ループ所要時間
+  - 受信側: `[DBG] recv` で chunk の受信タイムスタンプ・長さ・repr
+  - 3 本 DEF 同時 ADC 送信でレスポンスが壊れる問題の調査用
+
 ## [1.64] - 2026-04-14
 ### 修正
 - DC特性: Excel&PNG保存時のフリーズ対策
